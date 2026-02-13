@@ -2,13 +2,13 @@ export type GameMode = 'classic' | 'no-mercy';
 
 export type CardColor = 'red' | 'yellow' | 'green' | 'blue' | 'black' | 'purple'; // Purple for No Mercy special
 
-export type CardType = 
-  | 'number' 
-  | 'skip' 
-  | 'reverse' 
-  | 'draw2' 
-  | 'wild' 
-  | 'wild4' 
+export type CardType =
+  | 'number'
+  | 'skip'
+  | 'reverse'
+  | 'draw2'
+  | 'wild'
+  | 'wild4'
   | 'draw4'
   | 'draw6' // No Mercy
   | 'draw10' // No Mercy
@@ -30,4 +30,5 @@ export interface Player {
   cardCount: number;
   isBot: boolean;
   position: 'top' | 'left' | 'right' | 'bottom';
+  hand?: ICard[];
 }
