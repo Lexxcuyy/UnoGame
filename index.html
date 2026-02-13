@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Uno Universe</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Fredoka', 'sans-serif'],
+            },
+            colors: {
+              uno: {
+                red: '#FF5555',
+                yellow: '#FFAA00',
+                green: '#55AA55',
+                blue: '#5555FF',
+                black: '#1a1a1a'
+              },
+              mercy: {
+                bg: '#0F172A',
+                accent: '#7C3AED',
+                glow: '#A855F7'
+              }
+            },
+            animation: {
+              'float': 'float 6s ease-in-out infinite',
+              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            },
+            keyframes: {
+              float: {
+                '0%, 100%': { transform: 'translateY(0)' },
+                '50%': { transform: 'translateY(-10px)' },
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <style>
+      body {
+        overscroll-behavior: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .card-shadow {
+        box-shadow: 
+          -1px 1px 0px rgba(0,0,0,0.1) inset,
+          2px 2px 5px rgba(0,0,0,0.2);
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "lucide-react": "https://esm.sh/lucide-react@^0.564.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-slate-900 text-white overflow-hidden">
+    <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
