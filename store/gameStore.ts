@@ -11,21 +11,31 @@ interface GameState {
   currentPlayerId: string;
   direction: 'cw' | 'ccw';
   gameMode: GameMode;
-  stackAccumulation: number; // For stacking draw cards
+  stackAccumulation: number;
   winner: string | null;
-  drawCount: number; // Track how many cards drawn in current turn (for optional draw rule)
-  isSwapping: boolean;
+  drawCount: number;
+
+  // Logic Repair States
+  activeColor: CardColor; // The effective color of the top card (resolves Wilds)
+  isChoosingColor: boolean; // Triggers UI Modal
+  pendingCardPlayed: ICard | null; // Card waiting for color selection
+  isSwapping: boolean; // 7 Rule
   error: string | null;
 
   // Actions
   initializeGame: (mode: GameMode) => void;
   playCard: (cardId: string) => void;
+  confirmColorSelection: (color: CardColor) => void; // New Action
   drawCard: () => void;
   passTurn: () => void;
   resetGame: () => void;
-  aiPlay: () => void; // New AI Action
+  aiPlay: () => void;
   swapHands: (targetPlayerId: string) => void;
   clearError: () => void;
+
+  // Internal (exposed for get() usage and potential advanced UI needs)
+  doPlayCardInternal: (card: ICard, playerIndex: number, chosenColor?: CardColor) => void;
+  advanceTurn: (skip: boolean) => void;
 }
 
 const COLORS: CardColor[] = ['red', 'yellow', 'green', 'blue'];
@@ -46,50 +56,35 @@ const generateDeck = (mode: GameMode): ICard[] => {
   let idCounter = 0;
   const getId = () => `card-${idCounter++}`;
 
-  // Helper to add card
   const addCard = (color: CardColor, type: CardType, value?: number, count = 1) => {
     for (let i = 0; i < count; i++) {
       deck.push({ id: getId(), color, type, value });
     }
   };
 
-  // Standard Colors
   COLORS.forEach(color => {
-    // Number 0 (1 per color)
     addCard(color, 'number', 0, 1);
-    // Numbers 1-9 (2 per color)
     for (let i = 1; i <= 9; i++) addCard(color, 'number', i, 2);
-    // Action Cards (2 per color)
     addCard(color, 'skip', undefined, 2);
     addCard(color, 'reverse', undefined, 2);
     addCard(color, 'draw2', undefined, 2);
   });
 
-  // Wild Cards
   addCard('black', 'wild', undefined, 4);
   addCard('black', 'draw4', undefined, 4);
 
-  // No Mercy Extras
   if (mode === 'no-mercy') {
     COLORS.forEach(color => {
-      // More Skips and Reverses
       addCard(color, 'skip', undefined, 2);
       addCard(color, 'reverse', undefined, 2);
-      // No Mercy Specials
-      addCard(color, 'draw2', undefined, 2); // More draw 2s
+      addCard(color, 'draw2', undefined, 2);
     });
-    // Rough approximation of No Mercy deck distribution
     addCard('red', 'draw6', undefined, 2);
     addCard('blue', 'draw6', undefined, 2);
     addCard('green', 'draw6', undefined, 2);
     addCard('yellow', 'draw6', undefined, 2);
-
-    addCard('black', 'draw10', undefined, 4); // Wild +10
-
-    // Skip Everyone
+    addCard('black', 'draw10', undefined, 4);
     COLORS.forEach(color => addCard(color, 'skipAll', undefined, 1));
-
-    // Discard All (Colored)
     COLORS.forEach(color => addCard(color, 'discardAll', undefined, 1));
   }
 
@@ -108,6 +103,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   stackAccumulation: 0,
   winner: null,
   drawCount: 0,
+  activeColor: 'black',
+  isChoosingColor: false,
+  pendingCardPlayed: null,
   isSwapping: false,
   error: null,
 
@@ -120,25 +118,28 @@ export const useGameStore = create<GameState>((set, get) => ({
       { id: 'bot3', name: 'Bot 3', avatar: 'https://picsum.photos/103/103', cardCount: 7, isBot: true, position: 'right', hand: [] },
     ];
 
-    // Deal cards
     players.forEach(p => {
-      p.hand = deck.splice(0, 7);
-      p.cardCount = 7;
+      p.hand = deck.splice(0, mode === 'no-mercy' ? 7 : 7);
+      p.cardCount = p.hand.length;
     });
 
-    // Start discard pile
     const firstCard = deck.shift()!;
+    let startColor = firstCard.color;
+    if (startColor === 'black') startColor = COLORS[Math.floor(Math.random() * COLORS.length)];
 
     set({
       deck,
       discardPile: [firstCard],
       players,
-      currentPlayerId: 'user', // User starts for simplicity
+      currentPlayerId: 'user',
       direction: 'cw',
       gameMode: mode,
       stackAccumulation: 0,
       winner: null,
       drawCount: 0,
+      activeColor: startColor,
+      isChoosingColor: false,
+      pendingCardPlayed: null,
       isSwapping: false,
       error: null
     });
@@ -147,7 +148,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   clearError: () => set({ error: null }),
 
   playCard: (cardId: string) => {
-    const { players, currentPlayerId, discardPile, direction, stackAccumulation, gameMode } = get();
+    const { players, currentPlayerId, discardPile, stackAccumulation, gameMode, activeColor } = get();
     const playerIndex = players.findIndex(p => p.id === currentPlayerId);
     if (playerIndex === -1) return;
 
@@ -162,7 +163,6 @@ export const useGameStore = create<GameState>((set, get) => ({
     let isValid = false;
     let newStack = stackAccumulation;
 
-    // Stacking Logic (No Mercy)
     if (stackAccumulation > 0) {
       if (gameMode === 'no-mercy') {
         const getPower = (c: ICard) => {
@@ -173,17 +173,16 @@ export const useGameStore = create<GameState>((set, get) => ({
           return 0;
         };
         const cardPower = getPower(card);
-        const stackPower = getPower(topCard);
+        const topPower = getPower(topCard);
 
-        // Equal or Higher Rule
-        if (cardPower >= stackPower && cardPower > 0) {
+        if (cardPower >= topPower && cardPower > 0) {
           isValid = true;
           newStack += cardPower;
         }
       }
     } else {
       // Normal Play
-      const colorMatch = card.color === topCard.color || card.color === 'black' || topCard.color === 'black' || card.color === 'purple';
+      const colorMatch = card.color === activeColor || card.color === 'black' || activeColor === 'black';
       const valueMatch = (card.type === 'number' && card.value === topCard.value);
       const typeMatch = card.type === topCard.type;
 
@@ -197,61 +196,63 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     if (!isValid) {
-      set({ error: "Invalid Move! Card too weak or doesn't match." });
+      set({ error: "Invalid Move! Check color or value." });
       setTimeout(() => get().clearError(), 2000);
       return;
     }
 
-    // --- Execute Play ---
-    const newHand = [...player.hand!];
-    newHand.splice(cardIndex, 1);
+    // --- Pending Color Choice for User ---
+    if (!player.isBot && (card.color === 'black' || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10')) {
+      set({ isChoosingColor: true, pendingCardPlayed: card });
+      return;
+    }
 
+    get().doPlayCardInternal(card, playerIndex);
+  },
+
+  doPlayCardInternal: (card: ICard, playerIndex: number, chosenColor?: CardColor) => {
+    const { players, discardPile, direction, stackAccumulation } = get();
+    const player = players[playerIndex];
+
+    const newHand = player.hand!.filter(c => c.id !== card.id);
     const newPlayers = [...players];
     newPlayers[playerIndex] = { ...player, hand: newHand, cardCount: newHand.length };
 
     const newDiscard = [...discardPile, card];
 
-    // Check Win
+    let newActiveColor = card.color;
+    if (chosenColor) newActiveColor = chosenColor;
+    else if (card.color === 'black') {
+      newActiveColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+    }
+
+    let newStack = stackAccumulation;
+    if (card.type === 'draw2') newStack += 2;
+    if (card.type === 'draw4') newStack += 4;
+    if (card.type === 'draw6') newStack += 6;
+    if (card.type === 'draw10') newStack += 10;
+
     if (newHand.length === 0) {
-      set({ winner: player.id });
+      set({ winner: player.id, players: newPlayers, discardPile: newDiscard, activeColor: newActiveColor });
       return;
     }
 
-    // --- Special Actions ---
-    let nextPlayerId = currentPlayerId;
     let newDirection = direction;
+    if (card.type === 'reverse') newDirection = direction === 'cw' ? 'ccw' : 'cw';
 
-    if (card.type === 'reverse') {
-      newDirection = direction === 'cw' ? 'ccw' : 'cw';
-    }
-
-    // 0/7 Rule Logic
-    if (card.type === 'number' && card.value === 7) {
-      set({ isSwapping: true, players: newPlayers, discardPile: newDiscard, stackAccumulation: newStack, drawCount: 0 });
-      return;
-    }
+    // 0/7 Logic
+    let swapping = false;
+    if (card.type === 'number' && card.value === 7) swapping = true;
     if (card.type === 'number' && card.value === 0) {
-      // Rotate Hands
       const hands = newPlayers.map(p => p.hand!);
       if (newDirection === 'cw') {
-        const lastHand = hands.pop()!;
-        hands.unshift(lastHand);
+        const last = hands.pop()!;
+        hands.unshift(last);
       } else {
-        const firstHand = hands.shift()!;
-        hands.push(firstHand);
+        const first = hands.shift()!;
+        hands.push(first);
       }
-      newPlayers.forEach((p, i) => {
-        p.hand = hands[i];
-        p.cardCount = p.hand.length;
-      });
-    }
-
-    // Discard All
-    if (card.type === 'discardAll') {
-      const colorToDiscard = card.color;
-      const keptCards = newPlayers[playerIndex].hand!.filter(c => c.color !== colorToDiscard && c.type !== 'discardAll');
-      newPlayers[playerIndex].hand = keptCards;
-      newPlayers[playerIndex].cardCount = keptCards.length;
+      newPlayers.forEach((p, i) => { p.hand = hands[i]; p.cardCount = p.hand.length; });
     }
 
     set({
@@ -259,29 +260,41 @@ export const useGameStore = create<GameState>((set, get) => ({
       discardPile: newDiscard,
       direction: newDirection,
       stackAccumulation: newStack,
+      activeColor: newActiveColor,
       drawCount: 0,
-      error: null
+      pendingCardPlayed: null,
+      isChoosingColor: false,
+      isSwapping: swapping
     });
 
-    const shouldSkip = card.type === 'skip' || card.type === 'skipAll' || (card.type === 'reverse' && players.length === 2);
+    let skip = card.type === 'skip' || card.type === 'skipAll';
+    if (card.type === 'reverse' && players.length === 2) skip = true;
 
-    if (card.type === 'skipAll') {
-      return; // Play again
+    if (card.type === 'skipAll') return;
+
+    if (!swapping) {
+      get().advanceTurn(skip);
     }
+  },
 
-    const getNextPlayerIndex = (skip = false) => {
-      let idx = playerIndex;
-      const move = newDirection === 'cw' ? 1 : -1;
-      let steps = 1;
-      if (skip) steps = 2;
+  confirmColorSelection: (color: CardColor) => {
+    const { pendingCardPlayed, players, currentPlayerId } = get();
+    if (!pendingCardPlayed) return;
+    const idx = players.findIndex(p => p.id === currentPlayerId);
+    get().doPlayCardInternal(pendingCardPlayed, idx, color);
+  },
 
-      idx = (idx + move * steps) % players.length;
-      if (idx < 0) idx += players.length;
-      return idx;
-    };
+  advanceTurn: (skip: boolean) => {
+    const { players, currentPlayerId, direction } = get();
+    let idx = players.findIndex(p => p.id === currentPlayerId);
+    const move = direction === 'cw' ? 1 : -1;
+    let steps = 1;
+    if (skip) steps = 2;
 
-    const nextIdx = getNextPlayerIndex(shouldSkip);
-    set({ currentPlayerId: players[nextIdx].id });
+    idx = (idx + move * steps) % players.length;
+    if (idx < 0) idx += players.length;
+
+    set({ currentPlayerId: players[idx].id });
   },
 
   drawCard: () => {
@@ -311,9 +324,18 @@ export const useGameStore = create<GameState>((set, get) => ({
     const newPlayers = [...players];
     newPlayers[playerIndex] = { ...player, hand: newHand, cardCount: newHand.length };
 
-    // Mercy Rule
+    // --- Mercy Rule Check ---
     if (gameMode === 'no-mercy' && newHand.length > 25) {
-      console.log(`Player ${player.name} eliminated via Mercy Rule!`);
+      if (player.id === 'user') {
+        set({ winner: 'mercy_eliminated' });
+        return;
+      } else {
+        newPlayers.splice(playerIndex, 1);
+        set({ players: newPlayers, deck: newDeck, discardPile: newDiscard, stackAccumulation: 0 });
+        const nextId = newPlayers[playerIndex % newPlayers.length].id;
+        set({ currentPlayerId: nextId });
+        return;
+      }
     }
 
     set({
@@ -327,20 +349,10 @@ export const useGameStore = create<GameState>((set, get) => ({
       get().passTurn();
       return;
     }
-
-    // Check if drawn card[0] is playable.
-    if (drawnCards.length === 1) {
-      // logic for auto-play could go here
-    }
   },
 
   passTurn: () => {
-    const { players, currentPlayerId, direction } = get();
-    const idx = players.findIndex(p => p.id === currentPlayerId);
-    const move = direction === 'cw' ? 1 : -1;
-    let nextIdx = (idx + move) % players.length;
-    if (nextIdx < 0) nextIdx += players.length;
-    set({ currentPlayerId: players[nextIdx].id });
+    get().advanceTurn(false);
   },
 
   resetGame: () => {
@@ -350,40 +362,44 @@ export const useGameStore = create<GameState>((set, get) => ({
       players: [],
       winner: null,
       stackAccumulation: 0,
+      activeColor: 'black',
+      isChoosingColor: false,
       isSwapping: false,
       error: null
     });
   },
 
   aiPlay: () => {
-    const { players, currentPlayerId, discardPile, stackAccumulation, gameMode } = get();
+    const { players, currentPlayerId, discardPile, stackAccumulation, gameMode, activeColor } = get();
     const playerIndex = players.findIndex(p => p.id === currentPlayerId);
     if (playerIndex === -1 || !players[playerIndex].isBot) return;
 
     const player = players[playerIndex];
     const topCard = discardPile[discardPile.length - 1];
 
-    const bestCard = getBestMove(player.hand!, topCard, stackAccumulation, gameMode);
+    const result = getBestMove(player.hand!, topCard, stackAccumulation, gameMode, activeColor);
 
-    if (bestCard) {
-      get().playCard(bestCard.id);
+    if (result) {
+      get().doPlayCardInternal(result.card, playerIndex, result.chosenColor as CardColor);
     } else {
       get().drawCard();
-      // Try to play drawn card
-      const freshState = get();
-      const freshPlayer = freshState.players[playerIndex];
-      const newCard = freshPlayer.hand![freshPlayer.hand!.length - 1];
-      const retryMove = getBestMove([newCard], topCard, stackAccumulation, gameMode);
-      if (retryMove) {
-        get().playCard(retryMove.id);
-      } else {
-        get().passTurn();
+
+      if (gameMode !== 'no-mercy') {
+        const freshState = get();
+        const freshPlayer = freshState.players[playerIndex];
+        const newCard = freshPlayer.hand![freshPlayer.hand!.length - 1];
+        const retry = getBestMove([newCard], topCard, stackAccumulation, gameMode, activeColor);
+        if (retry) {
+          get().doPlayCardInternal(retry.card, playerIndex, retry.chosenColor as CardColor);
+        } else {
+          get().passTurn();
+        }
       }
     }
   },
 
   swapHands: (targetPlayerId: string) => {
-    const { players, currentPlayerId, direction } = get();
+    const { players, currentPlayerId } = get();
     const currentPlayerIndex = players.findIndex(p => p.id === currentPlayerId);
     const targetPlayerIndex = players.findIndex(p => p.id === targetPlayerId);
 
@@ -399,23 +415,8 @@ export const useGameStore = create<GameState>((set, get) => ({
     newPlayers[targetPlayerIndex].hand = playerHand;
     newPlayers[targetPlayerIndex].cardCount = playerHand.length;
 
-    // Finish turn logic
-    const getNextPlayerIndex = (skip = false) => {
-      let idx = currentPlayerIndex;
-      const move = direction === 'cw' ? 1 : -1;
-      let steps = 1;
-
-      idx = (idx + move * steps) % players.length;
-      if (idx < 0) idx += players.length;
-      return idx;
-    };
-
-    const nextIdx = getNextPlayerIndex();
-    set({
-      players: newPlayers,
-      isSwapping: false,
-      currentPlayerId: players[nextIdx].id
-    });
+    set({ players: newPlayers, isSwapping: false });
+    get().advanceTurn(false);
   }
 
 }));

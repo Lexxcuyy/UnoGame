@@ -10,6 +10,8 @@ interface HandProps {
 }
 
 const Hand: React.FC<HandProps> = ({ cards, onPlayCard, isCurrentTurn }) => {
+    const [hoveredCardId, setHoveredCardId] = React.useState<string | null>(null);
+
     // Calculate fan curve
     const getCardStyle = (index: number, total: number) => {
         if (total === 1) return { rotate: 0, y: 0 };
@@ -22,7 +24,6 @@ const Hand: React.FC<HandProps> = ({ cards, onPlayCard, isCurrentTurn }) => {
         const rotate = startAngle + index * angleStep;
 
         // Arch effect (Y-axis)
-        // Center cards are higher (y=0), outer cards lower (y+)
         const absDistance = Math.abs(index - (total - 1) / 2);
         const y = Math.pow(absDistance, 2) * 2;
 
@@ -35,29 +36,31 @@ const Hand: React.FC<HandProps> = ({ cards, onPlayCard, isCurrentTurn }) => {
                 <AnimatePresence>
                     {cards.map((card, index) => {
                         const { rotate, y } = getCardStyle(index, cards.length);
+                        const isHovered = hoveredCardId === card.id;
 
                         return (
                             <motion.div
                                 layout
                                 key={card.id}
+                                onMouseEnter={() => setHoveredCardId(card.id)}
+                                onMouseLeave={() => setHoveredCardId(null)}
                                 initial={{ opacity: 0, y: 100, rotate: 0 }}
                                 animate={{
                                     opacity: 1,
                                     y: y,
                                     rotate: rotate,
                                     x: 0,
+                                    zIndex: isHovered ? 100 : index, // Explicit Z-Index override
                                     transition: { type: 'spring', stiffness: 300, damping: 25 }
                                 }}
                                 exit={{ opacity: 0, y: -100, scale: 0.5, transition: { duration: 0.2 } }}
                                 whileHover={{
                                     y: -40,
                                     scale: 1.15,
-                                    rotate: 0, // Straighten on hover
-                                    zIndex: 100,
+                                    rotate: 0,
                                     transition: { duration: 0.2 }
                                 }}
                                 className="relative -ml-8 first:ml-0 origin-bottom cursor-grab active:cursor-grabbing"
-                                style={{ zIndex: index }}
                                 onClick={() => isCurrentTurn && onPlayCard(card.id)}
                             >
                                 <Card

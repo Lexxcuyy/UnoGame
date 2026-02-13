@@ -5,8 +5,8 @@ export const getBestMove = (
     topCard: ICard,
     stackAccumulation: number,
     mode: GameMode,
-    colorOverride?: string // In case top card is wild
-): ICard | null => {
+    activeColor: string // New param: The effective color of the top card
+): { card: ICard; chosenColor?: string } | null => {
 
     // 1. Filter playable cards
     const playableCards = hand.filter(card => {
@@ -21,24 +21,29 @@ export const getBestMove = (
                     return 0;
                 };
                 const cardPower = getPower(card);
-                const stackPower = getPower(topCard);
-                // Strictly speaking, we just need to stack. Rules say "Equal or Higher".
-                // But if stackAccumulation is active, it means topCard IS a draw card.
-                // We simplify: if card is draw and power >= stackPower (if stackPower known, usually we just assume current draw req needs to be met)
-                // Actually, we just check if it's a valid stack move.
-                // For simplicity: Any draw card >= topCard (if topCard is draw)
-                return cardPower >= getPower(topCard) && cardPower > 0;
+                const topPower = getPower(topCard);
+
+                // No Mercy Stacking Rule: Power must be Equal or Higher
+                // And obviously must be a draw card
+                return cardPower >= topPower && cardPower > 0;
             }
-            return false; // Classic: cannot stack
+            return false; // Classic: cannot stack usually
         }
 
         // Normal Play
-        const currentColor = colorOverride || topCard.color;
-        const colorMatch = card.color === currentColor || card.color === 'black' || currentColor === 'black' || card.color === 'purple';
+        const currentColor = activeColor; // Use the active global color
+
+        // Color Match
+        // Wilds match anything.
+        // 'black' cards match anything.
+        // 'purple' cards (if any) match anything or specific? Let's assume matches for now.
+        const colorMatch = card.color === currentColor || card.color === 'black' || currentColor === 'black';
+
+        // Value/Type Match
         const valueMatch = (card.type === 'number' && card.value === topCard.value);
         const typeMatch = card.type === topCard.type;
 
-        return colorMatch || valueMatch || typeMatch || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10';
+        return colorMatch || valueMatch || typeMatch || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10' || card.type === 'draw6' || card.type === 'skipAll' || card.type === 'discardAll';
     });
 
     if (playableCards.length === 0) return null;
@@ -55,8 +60,8 @@ export const getBestMove = (
         if (c.type === 'skipAll') score += 90;
         if (c.type === 'discardAll') score += 50;
         if (c.type === 'skip' || c.type === 'reverse') score += 20;
-        if (c.type === 'wild') score += 10; // Save wilds? Or play? Bots usually play wilds early to change color
         if (c.type === 'number') score += c.value || 0;
+        if (c.type === 'wild') score -= 10; // Save wilds for emergency? Or play? Score lower to prefer colored cards.
 
         return score;
     };
@@ -64,5 +69,22 @@ export const getBestMove = (
     // Sort by score descending
     playableCards.sort((a, b) => scoreCard(b) - scoreCard(a));
 
-    return playableCards[0];
+    const bestCard = playableCards[0];
+
+    // 3. Choose Color if Wild
+    // If we play a Black card (Wild, Draw4, Draw10), we MUST choose a color.
+    let chosenColor = undefined;
+    if (bestCard.color === 'black' || bestCard.type === 'wild' || bestCard.type === 'wild4' || bestCard.type === 'draw4' || bestCard.type === 'draw10') {
+        // Pick color with most cards in hand
+        const counts = { red: 0, blue: 0, green: 0, yellow: 0 };
+        hand.forEach(c => {
+            if (['red', 'blue', 'green', 'yellow'].includes(c.color)) {
+                counts[c.color as keyof typeof counts]++;
+            }
+        });
+        // Find max
+        chosenColor = Object.keys(counts).reduce((a, b) => counts[a as keyof typeof counts] > counts[b as keyof typeof counts] ? a : b);
+    }
+
+    return { card: bestCard, chosenColor };
 };
