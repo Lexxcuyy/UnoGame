@@ -338,6 +338,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
     }
 
+    // Capture stack BEFORE resetting
+    const stackWasActive = stackAccumulation > 0;
+
     set({
       deck: newDeck,
       discardPile: newDiscard,
@@ -345,7 +348,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       stackAccumulation: 0,
     });
 
-    if (stackAccumulation > 0) {
+    if (stackWasActive) {
       get().passTurn();
       return;
     }

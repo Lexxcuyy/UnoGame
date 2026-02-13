@@ -59,36 +59,94 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
     const isTurn = currentPlayerId === player.id;
     const canSwap = isSwapping && isUserTurn && player.id !== 'user';
 
+    // Calculate limits for performance
+    const renderLimit = 10;
+    const displayCount = Math.min(player.cardCount, renderLimit);
+
+    // Layout logic
+    const isTop = player.position === 'top';
+    const isSide = player.position === 'left' || player.position === 'right';
+
     return (
       <div
         onClick={() => canSwap && swapHands(player.id)}
         className={clsx(
-          "absolute flex flex-col items-center gap-2 transition-all duration-500 z-10",
-          player.position === 'top' && "top-8 left-1/2 -translate-x-1/2",
+          "absolute flex flex-col items-center gap-4 transition-all duration-500 z-10",
+          player.position === 'top' && "top-[-40px] left-1/2 -translate-x-1/2", // Pull top player up a bit
           player.position === 'left' && "left-8 top-1/2 -translate-y-1/2 items-start",
           player.position === 'right' && "right-8 top-1/2 -translate-y-1/2 items-end",
           canSwap && "cursor-pointer hover:scale-110 z-50 brightness-125"
         )}
       >
-        <div className={clsx(
-          "relative p-1 rounded-full border-4 transition-colors",
-          isTurn ? "border-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.6)]" : "border-slate-700",
-          canSwap && "animate-pulse border-green-400"
-        )}>
-          <img src={player.avatar} className="w-16 h-16 rounded-full bg-slate-800" alt={player.name} />
-          <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-slate-900 border-2 border-slate-600 flex items-center justify-center font-bold text-sm text-white">
-            {player.cardCount}
+        {/* Avatar & Info */}
+        <div className="relative flex flex-col items-center">
+          <div className={clsx(
+            "relative p-1 rounded-full border-4 transition-colors z-20 bg-slate-900",
+            isTurn ? "border-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.6)]" : "border-slate-700",
+            canSwap && "animate-pulse border-green-400"
+          )}>
+            <img src={player.avatar} className="w-16 h-16 rounded-full bg-slate-800" alt={player.name} />
+            <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-slate-900 border-2 border-slate-600 flex items-center justify-center font-bold text-sm text-white">
+              {player.cardCount}
+            </div>
+          </div>
+          <div className="mt-1 text-white font-bold bg-black/60 px-3 py-0.5 rounded-full backdrop-blur-md text-sm border border-white/10">
+            {player.name}
           </div>
         </div>
-        <div className="text-white font-bold bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm">
-          {player.name}
-        </div>
 
-        {/* Opponent Cards Stack (Visual Only) */}
-        <div className="relative mt-2 h-16 w-12">
-          {[...Array(Math.min(player.cardCount, 5))].map((_, i) => (
-            <div key={i} className="absolute inset-0 bg-slate-800 rounded border border-slate-600 shadow-sm" style={{ top: i * -4, left: i * 2 }} />
-          ))}
+        {/* Fanned Cards */}
+        <div className={clsx(
+          "relative flex justify-center",
+          isTop ? "h-24 w-64 -mt-4 opacity-90" : "h-64 w-24 -mt-8 opacity-90"
+        )}>
+          {Array.from({ length: displayCount }).map((_, i) => {
+            // Top: Horizontal Arc
+            // Sides: Vertical Arc/Stack
+            let style = {};
+
+            if (isTop) {
+              const spread = Math.min(player.cardCount * 5, 120);
+              const start = -spread / 2;
+              const step = spread / (displayCount - 1 || 1);
+              const rotation = start + (i * step);
+              style = {
+                transform: `rotate(${rotation}deg) translateY(${i * 1}px)`,
+                zIndex: i
+              };
+              return (
+                <div key={i} className="absolute origin-top" style={style}>
+                  <Card isFaceDown size="sm" className="shadow-lg border-white/10" />
+                </div>
+              )
+            } else {
+              // Sides
+              const isRight = player.position === 'right';
+              const spread = Math.min(player.cardCount * 15, 60);
+              const start = -spread / 2;
+              const step = spread / (displayCount - 1 || 1);
+              const rotation = start + (i * step);
+
+              style = {
+                transform: `rotate(${isRight ? -90 + rotation : 90 + rotation}deg) translateX(${i * -2}px)`,
+                zIndex: i
+              };
+
+              return (
+                <div key={i} className="absolute origin-center" style={style}>
+                  <Card isFaceDown size="sm" className="shadow-lg border-white/10" />
+                </div>
+              )
+            }
+          })}
+          {/* Overflow Indicator */}
+          {player.cardCount > renderLimit && (
+            <div className="absolute inset-0 flex items-center justify-center z-50">
+              <div className="bg-black/80 text-white text-xs font-bold px-2 py-1 rounded-full border border-white/20">
+                +{player.cardCount - renderLimit}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
