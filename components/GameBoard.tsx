@@ -83,16 +83,21 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
         {/* Avatar & Info */}
         <div className="relative flex flex-col items-center z-20">
           <div className={clsx(
-            "relative p-1 rounded-full border-4 transition-colors bg-slate-900 shadow-xl",
+            "relative p-1 rounded-full border-4 transition-colors bg-slate-900 shadow-xl group",
             isTurn ? "border-yellow-400 shadow-[0_0_30px_rgba(250,204,21,0.6)]" : "border-slate-700",
             canSwap && "animate-pulse border-green-400"
           )}>
-            <img src={player.avatar} className="w-16 h-16 rounded-full bg-slate-800 object-cover" alt={player.name} />
-            <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-slate-900 border-2 border-slate-600 flex items-center justify-center font-bold text-sm text-white shadow-md">
+            <img src={player.avatar} className="w-20 h-20 rounded-full bg-slate-800 object-cover" alt={player.name} />
+
+            {/* Enhanced Card Count Badge (Outside) */}
+            <div className={clsx(
+              "absolute -bottom-3 -right-3 w-10 h-10 rounded-full flex items-center justify-center font-black text-lg text-black shadow-lg border-2 border-white transform transition-transform group-hover:scale-110",
+              player.cardCount < 3 ? "bg-red-500 text-white animate-bounce" : "bg-white"
+            )}>
               {player.cardCount}
             </div>
           </div>
-          <div className="mt-2 text-white font-bold bg-black/60 px-3 py-0.5 rounded-full backdrop-blur-md text-xs border border-white/10 shadow-lg">
+          <div className="mt-2 text-white font-bold bg-black/60 px-4 py-1 rounded-full backdrop-blur-md text-sm border border-white/10 shadow-lg">
             {player.name}
           </div>
         </div>
@@ -147,7 +152,8 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
   // New State Store Selectors
   const isStackingChoice = useGameStore(state => state.isStackingChoice);
   const resolveStackChoice = useGameStore(state => state.resolveStackChoice);
-  const stackAccumulation = useGameStore(state => state.stackAccumulation); // Single source of truth
+  const stackAccumulation = useGameStore(state => state.stackAccumulation);
+  const lastAction = useGameStore(state => state.lastAction);
 
   if (winner) {
     if (winner === 'mercy_eliminated') {
@@ -176,8 +182,38 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
       {/* FX Layers */}
       <FlyingCardLayer />
 
-      {/* Table Surface */}
+      {/* Action Log Banner */}
+      <AnimatePresence mode='wait'>
+        {lastAction && (
+          <motion.div
+            key={lastAction}
+            initial={{ y: -50, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -20, opacity: 0 }}
+            className="absolute top-8 left-1/2 -translate-x-1/2 z-40"
+          >
+            <div className="px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white font-medium shadow-lg flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+              {lastAction}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Table Surface with Direction Ring */}
       <div className="absolute inset-0 flex items-center justify-center">
+        {/* Direction Ring */}
+        <motion.div
+          animate={{ rotate: direction === 'cw' ? 360 : -360 }}
+          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+          className="absolute w-[650px] h-[650px] rounded-full border border-white/5 border-dashed pointer-events-none opacity-20"
+        >
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
+          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
+          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
+          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
+        </motion.div>
+
         <div className="w-[80vw] h-[60vh] bg-green-900/20 rounded-[100px] border-8 border-white/5 backdrop-blur-sm relative shadow-2xl transform perspective-[2000px] rotate-x-12">
 
           {/* Center Area */}

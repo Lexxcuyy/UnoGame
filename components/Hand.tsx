@@ -59,9 +59,13 @@ const Hand: React.FC<HandProps> = ({ cards, onPlayCard, isCurrentTurn }) => {
             return false;
         }
 
-        // 2. Normal Rule
-        if (card.color === activeColor || card.color === 'black' || activeColor === 'black') return true;
-        if (card.type === topCard.type || (card.type === 'number' && card.value === topCard.value)) return true;
+        // 2. Normal Rule (STRICT)
+        const colorMatch = card.color === activeColor;
+        const isWild = card.color === 'black';
+
+        if (colorMatch || isWild) return true;
+        if (card.type === topCard.type) return true;
+        if (card.type === 'number' && card.value === topCard.value) return true;
 
         return false;
     };

@@ -30,6 +30,7 @@ interface GameState {
   // Visual Events
   lastEvent: GameEvent | null;
   clearLastEvent: () => void;
+  lastAction: string | null; // Log for UI Banner
 
   // Stacking Logic (Choice)
   isStackingChoice: boolean; // Triggers UI Modal for User
@@ -123,6 +124,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   error: null,
   lastEvent: null,
   isStackingChoice: false,
+  lastAction: null,
 
   initializeGame: (mode: GameMode) => {
     const deck = generateDeck(mode);
@@ -140,7 +142,10 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const firstCard = deck.shift()!;
     let startColor = firstCard.color;
-    if (startColor === 'black') startColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+    // Ensure activeColor is NEVER black at start
+    if (startColor === 'black') {
+      startColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+    }
 
     set({
       deck,
@@ -158,6 +163,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       isSwapping: false,
       error: null,
       lastEvent: null,
+      lastAction: 'Game Started! Good Luck!',
       isStackingChoice: false
     });
   },
@@ -199,12 +205,14 @@ export const useGameStore = create<GameState>((set, get) => ({
         }
       }
     } else {
-      // Normal Play
-      const colorMatch = card.color === activeColor || card.color === 'black' || activeColor === 'black';
+      // Normal Play - STRICT VALIDATION
+      const colorMatch = card.color === activeColor; // Absolute strict check
+      const isWild = card.color === 'black'; // Wilds are always valid color-wise
+
       const valueMatch = (card.type === 'number' && card.value === topCard.value);
       const typeMatch = card.type === topCard.type;
 
-      if (colorMatch || valueMatch || typeMatch || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10') {
+      if (colorMatch || isWild || valueMatch || typeMatch) {
         isValid = true;
         if (card.type === 'draw2') newStack += 2;
         if (card.type === 'draw4') newStack += 4;
@@ -273,6 +281,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       newPlayers.forEach((p, i) => { p.hand = hands[i]; p.cardCount = p.hand.length; });
     }
 
+    // Action Log
+    let actionMsg = `${player.name} played ${card.color} ${card.type === 'number' ? card.value : card.type}`;
+    if (card.color === 'black') {
+      actionMsg = `${player.name} played Wild (Chose ${newActiveColor.toUpperCase()})`;
+    } else if (card.type === 'draw2') {
+      actionMsg = `${player.name} played +2`;
+    }
+
     set({
       players: newPlayers,
       discardPile: newDiscard,
@@ -282,7 +298,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       drawCount: 0,
       pendingCardPlayed: null,
       isChoosingColor: false,
-      isSwapping: swapping
+      isSwapping: swapping,
+      lastAction: actionMsg
     });
 
     let skip = card.type === 'skip' || card.type === 'skipAll';
@@ -397,6 +414,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     const newHand = [...player.hand!, ...drawnCards];
     const newPlayers = [...players];
     newPlayers[playerIndex] = { ...player, hand: newHand, cardCount: newHand.length };
+
+    // Log Action
+    const drawMsg = `${player.name} drew ${drawAmount} card${drawAmount > 1 ? 's' : ''}`;
+    set({ lastAction: drawMsg });
 
     // --- Mercy Rule Check ---
     if (gameMode === 'no-mercy' && newHand.length > 25) {
