@@ -244,7 +244,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     const newPlayers = [...players];
     newPlayers[playerIndex] = { ...player, hand: newHand, cardCount: newHand.length };
 
-    const newDiscard = [...discardPile, card];
+    const newDiscard = [...discardPile, { ...card, playedBy: player.id }];
 
     let newActiveColor = card.color;
     if (chosenColor) newActiveColor = chosenColor;
@@ -407,6 +407,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       drawnCards.push(newDeck.shift()!);
     }
 
+    // --- Strict Draw & Pass Logic ---
+    // If it was a natural draw (stackAccumulation === 0), force the pass immediately
+    // and do NOT allow playing the drawn card.
+    const isNaturalDraw = stackAccumulation === 0;
+
     // Emit Event
     set({ lastEvent: { type: 'draw', playerId: currentPlayerId, count: drawAmount } });
 
@@ -443,7 +448,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       stackAccumulation: 0,
     });
 
-    if (stackWasActive) {
+    if (stackWasActive || isNaturalDraw) {
       get().passTurn();
       return;
     }
@@ -480,19 +485,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (result) {
       get().doPlayCardInternal(result.card, playerIndex, result.chosenColor as CardColor);
     } else {
+      // FORCE DRAW & PASS
+      // Since drawCard now auto-passes on natural draws, this will end the turn.
       get().drawCard();
-
-      if (gameMode !== 'no-mercy') {
-        const freshState = get();
-        const freshPlayer = freshState.players[playerIndex];
-        const newCard = freshPlayer.hand![freshPlayer.hand!.length - 1];
-        const retry = getBestMove([newCard], topCard, stackAccumulation, gameMode, activeColor);
-        if (retry) {
-          get().doPlayCardInternal(retry.card, playerIndex, retry.chosenColor as CardColor);
-        } else {
-          get().passTurn();
-        }
-      }
     }
   },
 

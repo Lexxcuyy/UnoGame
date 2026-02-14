@@ -21,6 +21,7 @@ export interface ICard {
   type: CardType;
   value?: number; // For number cards
   isWild?: boolean;
+  playedBy?: string;
 }
 
 export interface Player {

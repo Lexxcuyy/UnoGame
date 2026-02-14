@@ -40,13 +40,25 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
   }, [mode, initializeGame]);
 
   // AI Turn Logic
+  // AI Turn Logic & Safety Net
   useEffect(() => {
     const currentPlayer = players.find(p => p.id === currentPlayerId);
     if (currentPlayer?.isBot && !winner && !isSwapping) {
+      // Primary AI Trigger
       const timer = setTimeout(() => {
         aiPlay();
       }, 1500); // 1.5s thinking time
-      return () => clearTimeout(timer);
+
+      // Safety Net: If bot gets stuck for 4s, force retry
+      const safetyTimer = setTimeout(() => {
+        console.warn("Bot appears stuck, forcing AI play...");
+        aiPlay();
+      }, 4000);
+
+      return () => {
+        clearTimeout(timer);
+        clearTimeout(safetyTimer);
+      };
     }
   }, [currentPlayerId, winner, players, aiPlay, isSwapping]);
 
@@ -83,11 +95,18 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
         {/* Avatar & Info */}
         <div className="relative flex flex-col items-center z-20">
           <div className={clsx(
-            "relative p-1 rounded-full border-4 transition-colors bg-slate-900 shadow-xl group",
-            isTurn ? "border-yellow-400 shadow-[0_0_30px_rgba(250,204,21,0.6)]" : "border-slate-700",
+            "relative p-1 rounded-full border-4 transition-all duration-300 bg-slate-900 shadow-xl group",
+            isTurn ? "border-yellow-400 shadow-[0_0_20px_5px_currentColor] scale-110" : "border-slate-700 opacity-60",
             canSwap && "animate-pulse border-green-400"
           )}>
             <img src={player.avatar} className="w-20 h-20 rounded-full bg-slate-800 object-cover" alt={player.name} />
+
+            {/* Active Turn Badge */}
+            {isTurn && (
+              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-yellow-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse">
+                THINKING...
+              </div>
+            )}
 
             {/* Enhanced Card Count Badge (Outside) */}
             <div className={clsx(
@@ -240,18 +259,30 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
             {/* Discard Pile */}
             <div className="relative w-32 h-48">
               <AnimatePresence mode='popLayout'>
-                {discardPile.slice(-5).map((card, i) => (
-                  <motion.div
-                    key={card.id}
-                    initial={{ scale: 0.5, y: -200, opacity: 0, rotate: Math.random() * 180 }}
-                    animate={{ scale: 1, y: 0, opacity: 1, rotate: (Math.random() - 0.5) * 20 }}
-                    exit={{ scale: 0.9, opacity: 0 }}
-                    className="absolute inset-0"
-                    style={{ zIndex: i }}
-                  >
-                    <Card card={card} size="lg" shadow />
-                  </motion.div>
-                ))}
+                {discardPile.slice(-5).map((card, i) => {
+                  // Determine entry position based on playedBy ID
+                  let initialX = 0;
+                  let initialY = -200; // Default fallback (fly down)
+
+                  if (card.playedBy === 'user') { initialX = 0; initialY = 500; }
+                  else if (card.playedBy === 'bot1') { initialX = 0; initialY = -500; } // Top
+                  else if (card.playedBy === 'bot2') { initialX = -500; initialY = 0; } // Left
+                  else if (card.playedBy === 'bot3') { initialX = 500; initialY = 0; } // Right
+
+                  return (
+                    <motion.div
+                      key={card.id}
+                      initial={{ scale: 0.5, x: initialX, y: initialY, opacity: 0, rotate: Math.random() * 180 }}
+                      animate={{ scale: 1, x: 0, y: 0, opacity: 1, rotate: (Math.random() - 0.5) * 20 }}
+                      exit={{ scale: 0.9, opacity: 0 }}
+                      className="absolute inset-0"
+                      style={{ zIndex: i }}
+                      transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                    >
+                      <Card card={card} size="lg" shadow />
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
           </div>
@@ -343,6 +374,25 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
             isCurrentTurn={isUserTurn}
           />
         </div>
+      </div>
+
+      {/* User Avatar & Status (Bottom Left) */}
+      <div className={clsx(
+        "absolute bottom-8 left-8 flex flex-col items-center gap-2 z-50 transition-all duration-300",
+        isUserTurn ? "scale-110" : "opacity-80 grayscale-[0.3]"
+      )}>
+        <div className={clsx(
+          "relative p-1 rounded-full border-4 bg-slate-900 shadow-xl",
+          isUserTurn ? "border-green-400 shadow-[0_0_20px_5px_currentColor]" : "border-slate-600"
+        )}>
+          <img src={userPlayer?.avatar} className="w-16 h-16 rounded-full bg-slate-800 object-cover" alt="You" />
+          {isUserTurn && (
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse">
+              YOUR TURN
+            </div>
+          )}
+        </div>
+        <span className="text-white font-bold bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10">You</span>
       </div>
 
       <div className="absolute bottom-6 right-6 z-50">
