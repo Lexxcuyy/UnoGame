@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { ICard, Player, GameMode, CardColor, CardType } from '../types';
 import { getBestMove } from '../utils/aiLogic';
+import { canPlayCard, canStackCard } from '../utils/rules';
 
 // --- Constants & Types ---
 
@@ -53,6 +54,36 @@ interface GameState {
 }
 
 const COLORS: CardColor[] = ['red', 'yellow', 'green', 'blue'];
+const TABLE_TURN_ORDER: Player['position'][] = ['bottom', 'right', 'top', 'left'];
+
+const getTurnRing = (players: Player[]): string[] => {
+  // Build ring from table positions, not raw array index order.
+  const sorted = [...players].sort((a, b) => {
+    const ai = TABLE_TURN_ORDER.indexOf(a.position);
+    const bi = TABLE_TURN_ORDER.indexOf(b.position);
+    return ai - bi;
+  });
+  return sorted.map(p => p.id);
+};
+
+const getNextPlayerId = (
+  players: Player[],
+  currentPlayerId: string,
+  direction: 'cw' | 'ccw',
+  steps: number
+): string => {
+  const ring = getTurnRing(players);
+  if (ring.length === 0) return currentPlayerId;
+
+  let idx = ring.indexOf(currentPlayerId);
+  if (idx === -1) idx = 0;
+
+  const move = direction === 'cw' ? 1 : -1;
+  idx = (idx + move * steps) % ring.length;
+  if (idx < 0) idx += ring.length;
+
+  return ring[idx];
+};
 
 // --- Helper Functions ---
 
@@ -98,6 +129,7 @@ const generateDeck = (mode: GameMode): ICard[] => {
     addCard('green', 'draw6', undefined, 2);
     addCard('yellow', 'draw6', undefined, 2);
     addCard('black', 'draw10', undefined, 4);
+    addCard('black', 'x2', undefined, 4);
     COLORS.forEach(color => addCard(color, 'skipAll', undefined, 1));
     COLORS.forEach(color => addCard(color, 'discardAll', undefined, 1));
   }
@@ -127,7 +159,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   lastAction: null,
 
   initializeGame: (mode: GameMode) => {
-    const deck = generateDeck(mode);
+    let deck = generateDeck(mode);
     const players: Player[] = [
       { id: 'user', name: 'You', avatar: 'https://picsum.photos/104/104', cardCount: 7, isBot: false, position: 'bottom', hand: [] },
       { id: 'bot1', name: 'Bot 1', avatar: 'https://picsum.photos/101/101', cardCount: 7, isBot: true, position: 'top', hand: [] },
@@ -140,10 +172,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       p.cardCount = p.hand.length;
     });
 
-    const firstCard = deck.shift()!;
+    let firstCard = deck.shift()!;
+    // Avoid unplayable/ambiguous opener for special stack-only cards.
+    while (firstCard && (firstCard.color === 'black' || firstCard.type === 'x2')) {
+      deck.push(firstCard);
+      deck = shuffle(deck);
+      firstCard = deck.shift()!;
+    }
     let startColor = firstCard.color;
     // Ensure activeColor is NEVER black at start
-    if (startColor === 'black') {
+    if (startColor === 'black' || startColor === 'purple') {
       startColor = COLORS[Math.floor(Math.random() * COLORS.length)];
     }
 
@@ -172,7 +210,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   clearError: () => set({ error: null }),
 
   playCard: (cardId: string) => {
-    const { players, currentPlayerId, discardPile, stackAccumulation, gameMode, activeColor } = get();
+    const { players, currentPlayerId, discardPile, stackAccumulation, gameMode, activeColor, isChoosingColor, isStackingChoice } = get();
+    if (isChoosingColor || isStackingChoice) return;
+
     const playerIndex = players.findIndex(p => p.id === currentPlayerId);
     if (playerIndex === -1) return;
 
@@ -182,44 +222,13 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const card = player.hand![cardIndex];
     const topCard = discardPile[discardPile.length - 1];
-
-    // --- Validation Logic ---
-    let isValid = false;
-    let newStack = stackAccumulation;
-
-    if (stackAccumulation > 0) {
-      if (gameMode === 'no-mercy') {
-        const getPower = (c: ICard) => {
-          if (c.type === 'draw2') return 2;
-          if (c.type === 'draw4') return 4;
-          if (c.type === 'draw6') return 6;
-          if (c.type === 'draw10') return 10;
-          return 0;
-        };
-        const cardPower = getPower(card);
-        const topPower = getPower(topCard);
-
-        if (cardPower >= topPower && cardPower > 0) {
-          isValid = true;
-          newStack += cardPower;
-        }
-      }
-    } else {
-      // Normal Play - STRICT VALIDATION
-      const colorMatch = card.color === activeColor; // Absolute strict check
-      const isWild = card.color === 'black'; // Wilds are always valid color-wise
-
-      const valueMatch = (card.type === 'number' && card.value === topCard.value);
-      const typeMatch = card.type === topCard.type;
-
-      if (colorMatch || isWild || valueMatch || typeMatch) {
-        isValid = true;
-        if (card.type === 'draw2') newStack += 2;
-        if (card.type === 'draw4') newStack += 4;
-        if (card.type === 'draw6') newStack += 6;
-        if (card.type === 'draw10') newStack += 10;
-      }
-    }
+    if (!topCard) return;
+    const isValid = canPlayCard(card, {
+      topCard,
+      activeColor,
+      stackAccumulation,
+      mode: gameMode
+    });
 
     if (!isValid) {
       set({ error: "Invalid Move! Check color or value." });
@@ -228,7 +237,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     // --- Pending Color Choice for User ---
-    if (!player.isBot && (card.color === 'black' || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10')) {
+    if (!player.isBot && ((card.color === 'black' && card.type !== 'x2') || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10')) {
       set({ isChoosingColor: true, pendingCardPlayed: card });
       return;
     }
@@ -237,7 +246,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   doPlayCardInternal: (card: ICard, playerIndex: number, chosenColor?: CardColor) => {
-    const { players, discardPile, direction, stackAccumulation } = get();
+    const { players, discardPile, direction, stackAccumulation, activeColor } = get();
     const player = players[playerIndex];
 
     const newHand = player.hand!.filter(c => c.id !== card.id);
@@ -250,6 +259,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (chosenColor) newActiveColor = chosenColor;
     else if (card.color === 'black') {
       newActiveColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+    } else if (card.type === 'x2') {
+      // Keep the running color; x2 is a stack modifier, not a color setter.
+      newActiveColor = activeColor;
     }
 
     let newStack = stackAccumulation;
@@ -257,29 +269,21 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (card.type === 'draw4') newStack += 4;
     if (card.type === 'draw6') newStack += 6;
     if (card.type === 'draw10') newStack += 10;
+    if (card.type === 'x2' && newStack > 0) newStack *= 2;
 
     if (newHand.length === 0) {
-      set({ winner: player.id, players: newPlayers, discardPile: newDiscard, activeColor: newActiveColor });
+      set({
+        winner: player.id,
+        players: newPlayers,
+        discardPile: newDiscard,
+        activeColor: newActiveColor,
+        lastEvent: { type: 'play', playerId: player.id, cardId: card.id }
+      });
       return;
     }
 
     let newDirection = direction;
     if (card.type === 'reverse') newDirection = direction === 'cw' ? 'ccw' : 'cw';
-
-    // 0/7 Logic
-    let swapping = false;
-    if (card.type === 'number' && card.value === 7) swapping = true;
-    if (card.type === 'number' && card.value === 0) {
-      const hands = newPlayers.map(p => p.hand!);
-      if (newDirection === 'cw') {
-        const last = hands.pop()!;
-        hands.unshift(last);
-      } else {
-        const first = hands.shift()!;
-        hands.push(first);
-      }
-      newPlayers.forEach((p, i) => { p.hand = hands[i]; p.cardCount = p.hand.length; });
-    }
 
     // Action Log
     let actionMsg = `${player.name} played ${card.color} ${card.type === 'number' ? card.value : card.type}`;
@@ -287,6 +291,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       actionMsg = `${player.name} played Wild (Chose ${newActiveColor.toUpperCase()})`;
     } else if (card.type === 'draw2') {
       actionMsg = `${player.name} played +2`;
+    } else if (card.type === 'x2') {
+      actionMsg = `${player.name} played x2 (Stack => ${newStack})`;
     }
 
     set({
@@ -298,18 +304,16 @@ export const useGameStore = create<GameState>((set, get) => ({
       drawCount: 0,
       pendingCardPlayed: null,
       isChoosingColor: false,
-      isSwapping: swapping,
-      lastAction: actionMsg
+      isSwapping: false,
+      lastAction: actionMsg,
+      lastEvent: { type: 'play', playerId: player.id, cardId: card.id }
     });
 
     let skip = card.type === 'skip' || card.type === 'skipAll';
     if (card.type === 'reverse' && players.length === 2) skip = true;
 
     if (card.type === 'skipAll') return;
-
-    if (!swapping) {
-      get().advanceTurn(skip);
-    }
+    get().advanceTurn(skip);
   },
 
   confirmColorSelection: (color: CardColor) => {
@@ -326,8 +330,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     if (choice === 'take') {
       get().drawCard(stackAccumulation);
-      set({ isStackingChoice: false, stackAccumulation: 0 }); // Reset stack
-      get().passTurn();
+      set({ isStackingChoice: false, stackAccumulation: 0 });
     } else {
       // User chose to stack - UI handles the card play interaction
       // Just close the modal
@@ -336,16 +339,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   advanceTurn: (skip: boolean) => {
-    const { players, currentPlayerId, direction, stackAccumulation, gameMode, deck, discardPile } = get();
-    let idx = players.findIndex(p => p.id === currentPlayerId);
-    const move = direction === 'cw' ? 1 : -1;
+    const { players, currentPlayerId, direction, stackAccumulation, gameMode, discardPile } = get();
     let steps = 1;
     if (skip) steps = 2;
 
-    idx = (idx + move * steps) % players.length;
-    if (idx < 0) idx += players.length;
+    const nextPlayerId = getNextPlayerId(players, currentPlayerId, direction, steps);
+    const nextPlayer = players.find(p => p.id === nextPlayerId);
+    if (!nextPlayer) return;
 
-    const nextPlayer = players[idx];
     set({ currentPlayerId: nextPlayer.id });
 
     // --- Stacking / Auto-Hit Logic ---
@@ -353,20 +354,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       // Check if next player has a valid counter
       const topCard = discardPile[discardPile.length - 1]; // Actually recent played card
 
-      const hasCounter = nextPlayer.hand!.some(card => {
-        if (gameMode === 'no-mercy') {
-          const getPower = (c: ICard) => {
-            if (c.type === 'draw2') return 2;
-            if (c.type === 'draw4') return 4;
-            if (c.type === 'draw6') return 6;
-            if (c.type === 'draw10') return 10;
-            return 0;
-          };
-          return getPower(card) >= ((topCard.type.startsWith('draw') ? getPower(topCard) : 0));
-        } else {
-          return card.type === 'draw2' || card.type === 'draw4' || card.type === 'draw6' || card.type === 'draw10';
-        }
-      });
+      const hasCounter = nextPlayer.hand!.some(card => canStackCard(card, topCard, gameMode));
 
       if (hasCounter) {
         if (!nextPlayer.isBot) {
@@ -378,15 +366,13 @@ export const useGameStore = create<GameState>((set, get) => ({
         // No Counter: Auto-Hit
         setTimeout(() => {
           get().drawCard(stackAccumulation);
-          set({ stackAccumulation: 0 }); // Reset stack AFTER draw
-          get().passTurn();
         }, 1000); // Delay for user to see whose turn it is
       }
     }
   },
 
   drawCard: (forcedCount?: number) => {
-    const { deck, discardPile, players, currentPlayerId, stackAccumulation, gameMode } = get();
+    const { deck, discardPile, players, currentPlayerId, stackAccumulation, gameMode, direction } = get();
     const playerIndex = players.findIndex(p => p.id === currentPlayerId);
     if (playerIndex === -1) return;
 
@@ -432,7 +418,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       } else {
         newPlayers.splice(playerIndex, 1);
         set({ players: newPlayers, deck: newDeck, discardPile: newDiscard, stackAccumulation: 0 });
-        const nextId = newPlayers[playerIndex % newPlayers.length].id;
+        const nextId = getNextPlayerId(newPlayers, player.id, direction, 1);
         set({ currentPlayerId: nextId });
         return;
       }
@@ -479,10 +465,11 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const player = players[playerIndex];
     const topCard = discardPile[discardPile.length - 1];
+    if (!topCard) return;
 
     const result = getBestMove(player.hand!, topCard, stackAccumulation, gameMode, activeColor);
 
-    if (result) {
+    if (result && canPlayCard(result.card, { topCard, activeColor, stackAccumulation, mode: gameMode })) {
       get().doPlayCardInternal(result.card, playerIndex, result.chosenColor as CardColor);
     } else {
       // FORCE DRAW & PASS

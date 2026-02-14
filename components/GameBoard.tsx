@@ -1,178 +1,389 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { ICard, Player } from '../types';
 import Card from './Card';
 import Hand from './Hand';
-import { ArrowLeft, MoreVertical, MessageCircle, Smile, Send, Clock, RefreshCw } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { MessageCircle } from 'lucide-react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { clsx } from 'clsx';
 import ColorPickerModal from './ColorPickerModal';
 import FlyingCardLayer from './FlyingCardLayer';
+import { canPlayCard } from '../utils/rules';
 
 interface GameBoardProps {
   mode: 'classic' | 'no-mercy';
+  onExit?: () => void;
 }
 
+const MOBILE_BREAKPOINT = 768;
+
+const MOBILE_Z_INDEX = {
+  table: 10,
+  opponents: 20,
+  hand: 30,
+  avatar: 40,
+  uno: 50,
+  modal: 200,
+} as const;
+
+const FlowArrowIcon = ({
+  size = 44,
+  color = '#9CA3AF',
+}: {
+  size?: number;
+  color?: string;
+}) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 48 48"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path d="M7 24H29" stroke={color} strokeOpacity="0.9" strokeWidth="5.5" strokeLinecap="round" />
+    <path d="M24 15L38 24L24 33V15Z" fill={color} fillOpacity="0.9" />
+  </svg>
+);
+
+interface MobileOpponentProps {
+  player: Player;
+  isTurn: boolean;
+  lowEffects: boolean;
+}
+
+const MobileOpponent = React.memo(({ player, isTurn, lowEffects }: MobileOpponentProps) => {
+  const isTop = player.position === 'top';
+  const isLeft = player.position === 'left';
+  const isRight = player.position === 'right';
+  const displayCount = Math.min(player.cardCount, 6);
+
+  const avatar = (
+    <div className="relative z-30 flex flex-col items-center">
+      <div
+        className={clsx(
+          'relative p-1 rounded-full border-2 bg-slate-900',
+          isTurn ? 'border-yellow-400' : 'border-slate-700 opacity-90',
+          !lowEffects && 'shadow-xl'
+        )}
+      >
+        <img src={player.avatar} className="w-10 h-10 rounded-full object-cover bg-slate-800" alt={player.name} />
+        <div
+          className={clsx(
+            'absolute -bottom-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black border-2 border-white',
+            player.cardCount < 3 ? 'bg-red-500 text-white' : 'bg-white text-black'
+          )}
+        >
+          {player.cardCount}
+        </div>
+      </div>
+      <div className="mt-1 px-2 py-0.5 text-[10px] font-bold text-white bg-black/60 rounded-full border border-white/10 whitespace-nowrap">
+        {player.name}
+      </div>
+    </div>
+  );
+
+  const stack = (
+    <div className={clsx('relative z-10', isTop ? 'w-[240px] h-8' : 'w-16 h-[150px]')}>
+      {Array.from({ length: displayCount }).map((_, i) => (
+        <div
+          key={`${player.id}-stack-${i}`}
+          className="absolute"
+          style={isTop ? { left: i * 24, top: 0, zIndex: i } : { top: i * 18, left: 0, zIndex: i }}
+        >
+          <Card isFaceDown size="sm" className="border-white/20" lowEffects={lowEffects} />
+        </div>
+      ))}
+    </div>
+  );
+
+  if (isTop) {
+    return (
+      <div className="absolute top-0 left-1/2 -translate-x-1/2" style={{ zIndex: MOBILE_Z_INDEX.opponents }}>
+        <div className="relative w-[240px] h-[108px]">
+          <div className="absolute -top-10 left-0">{stack}</div>
+          <div className="absolute top-12 left-1/2 -translate-x-1/2">{avatar}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={clsx(
+        'absolute top-[44%] -translate-y-1/2',
+        isLeft ? 'left-0' : 'right-0'
+      )}
+      style={{ zIndex: MOBILE_Z_INDEX.opponents }}
+    >
+      <div className="relative w-[80px] h-[180px]">
+        <div className={clsx('absolute -top-3 z-30', isLeft ? 'left-2' : 'right-2')}>{avatar}</div>
+        <div className={clsx('absolute top-12 z-10', isLeft ? 'left-[-34px]' : 'right-[-34px]')}>{stack}</div>
+      </div>
+    </div>
+  );
+});
+
+MobileOpponent.displayName = 'MobileOpponent';
+
+interface DesktopOpponentProps {
+  player: Player;
+  isTurn: boolean;
+  isCompactViewport: boolean;
+}
+
+const DesktopOpponent = React.memo(({ player, isTurn, isCompactViewport }: DesktopOpponentProps) => {
+  const isTop = player.position === 'top';
+  const isLeft = player.position === 'left';
+  const isRight = player.position === 'right';
+  const displayCount = Math.min(player.cardCount, 6);
+
+  const wrapperClass = clsx(
+    'absolute z-20',
+    isTop && 'top-2 left-1/2 -translate-x-1/2',
+    isLeft && (isCompactViewport ? 'left-2 top-1/2 -translate-y-1/2' : 'left-6 top-1/2 -translate-y-1/2'),
+    isRight && (isCompactViewport ? 'right-2 top-1/2 -translate-y-1/2' : 'right-6 top-1/2 -translate-y-1/2')
+  );
+
+  const avatarSizeClass = isCompactViewport ? 'w-14 h-14' : 'w-16 h-16';
+
+  return (
+    <div className={wrapperClass}>
+      <div className={clsx('flex items-center', isTop ? 'flex-col gap-2' : 'gap-3', isRight && 'flex-row-reverse')}>
+        <div className="relative flex flex-col items-center z-20">
+          <div
+            className={clsx(
+              'relative p-1 rounded-full border-4 transition-all duration-300 bg-slate-900 shadow-xl',
+              isTurn ? 'border-yellow-400 shadow-[0_0_20px_5px_currentColor] scale-110' : 'border-slate-700 opacity-80'
+            )}
+          >
+            <img src={player.avatar} className={clsx('rounded-full bg-slate-800 object-cover', avatarSizeClass)} alt={player.name} />
+            <div
+              className={clsx(
+                'absolute -bottom-2 -right-2 w-8 h-8 rounded-full flex items-center justify-center font-black text-sm text-black shadow-lg border-2 border-white',
+                player.cardCount < 3 ? 'bg-red-500 text-white' : 'bg-white'
+              )}
+            >
+              {player.cardCount}
+            </div>
+          </div>
+          <div className="mt-1 text-white font-bold bg-black/60 rounded-full backdrop-blur-md border border-white/10 shadow-lg px-3 py-1 text-xs">
+            {player.name}
+          </div>
+        </div>
+
+        <div className={clsx('relative', isTop ? 'w-52 h-14' : 'w-12 h-28')}>
+          {Array.from({ length: displayCount }).map((_, i) => (
+            <div key={`${player.id}-stack-${i}`} className="absolute" style={isTop ? { left: i * 12, top: 0, zIndex: i } : { top: i * 12, left: 0, zIndex: i }}>
+              <Card isFaceDown size="xs" className="shadow-md border-white/20" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+DesktopOpponent.displayName = 'DesktopOpponent';
+
 const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
-  const {
-    players,
-    currentPlayerId,
-    discardPile,
-    direction,
-    winner,
-    initializeGame,
-    playCard,
-    drawCard,
-    // stackAccumulation, // Accessed via selector below
-    passTurn,
-    aiPlay,
-    error,
-    isSwapping,
-    swapHands,
-    // New Logic Props
-    activeColor,
-    isChoosingColor,
-    confirmColorSelection
-  } = useGameStore();
+  const [isCompactViewport, setIsCompactViewport] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+
+  const players = useGameStore(state => state.players);
+  const currentPlayerId = useGameStore(state => state.currentPlayerId);
+  const discardPile = useGameStore(state => state.discardPile);
+  const direction = useGameStore(state => state.direction);
+  const winner = useGameStore(state => state.winner);
+  const initializeGame = useGameStore(state => state.initializeGame);
+  const playCard = useGameStore(state => state.playCard);
+  const drawCard = useGameStore(state => state.drawCard);
+  const aiPlay = useGameStore(state => state.aiPlay);
+  const error = useGameStore(state => state.error);
+  const activeColor = useGameStore(state => state.activeColor);
+  const isChoosingColor = useGameStore(state => state.isChoosingColor);
+  const confirmColorSelection = useGameStore(state => state.confirmColorSelection);
+  const isStackingChoice = useGameStore(state => state.isStackingChoice);
+  const resolveStackChoice = useGameStore(state => state.resolveStackChoice);
+  const stackAccumulation = useGameStore(state => state.stackAccumulation);
+  const lastAction = useGameStore(state => state.lastAction);
+
+  const prefersReducedMotion = useReducedMotion() ?? false;
+  const mobileLowEffects = isMobileViewport || prefersReducedMotion;
 
   useEffect(() => {
     initializeGame(mode);
   }, [mode, initializeGame]);
 
-  // AI Turn Logic
-  // AI Turn Logic & Safety Net
+  useEffect(() => {
+    const updateViewportMode = () => {
+      setIsCompactViewport(window.innerHeight < 760 || window.innerWidth < 1200);
+      setIsMobileViewport(window.innerWidth < MOBILE_BREAKPOINT);
+    };
+    updateViewportMode();
+    window.addEventListener('resize', updateViewportMode);
+    return () => window.removeEventListener('resize', updateViewportMode);
+  }, []);
+
   useEffect(() => {
     const currentPlayer = players.find(p => p.id === currentPlayerId);
-    if (currentPlayer?.isBot && !winner && !isSwapping) {
-      // Primary AI Trigger
-      const timer = setTimeout(() => {
-        aiPlay();
-      }, 1500); // 1.5s thinking time
-
-      // Safety Net: If bot gets stuck for 4s, force retry
-      const safetyTimer = setTimeout(() => {
-        console.warn("Bot appears stuck, forcing AI play...");
-        aiPlay();
-      }, 4000);
-
+    if (currentPlayer?.isBot && !winner) {
+      const timer = setTimeout(() => aiPlay(), 1200);
+      const safetyTimer = setTimeout(() => aiPlay(), 3500);
       return () => {
         clearTimeout(timer);
         clearTimeout(safetyTimer);
       };
     }
-  }, [currentPlayerId, winner, players, aiPlay, isSwapping]);
+  }, [currentPlayerId, winner, players, aiPlay]);
 
-  const userPlayer = players.find(p => p.id === 'user');
-  const topCard = discardPile[discardPile.length - 1];
+  const userPlayer = useMemo(() => players.find(p => p.id === 'user'), [players]);
+  const opponents = useMemo(() => players.filter(p => p.id !== 'user'), [players]);
   const isUserTurn = currentPlayerId === 'user';
   const isNoMercy = mode === 'no-mercy';
+  const topDiscardCards = useMemo(() => discardPile.slice(-5), [discardPile]);
+  const topCard = discardPile[discardPile.length - 1];
+  const userHand = userPlayer?.hand || [];
+  const hasPlayableUserCard = useMemo(() => {
+    if (!isUserTurn || !topCard) return false;
+    return userHand.some((card: ICard) => canPlayCard(card, {
+      topCard,
+      activeColor,
+      stackAccumulation,
+      mode,
+    }));
+  }, [isUserTurn, topCard, userHand, activeColor, stackAccumulation, mode]);
 
-  // Opponent Component (Refactored for Fan Layout)
-  const Opponent: React.FC<{ player: Player }> = ({ player }) => {
-    const isTurn = currentPlayerId === player.id;
-    const canSwap = isSwapping && isUserTurn && player.id !== 'user';
+  const renderStackModal = () => (
+    <AnimatePresence>
+      {isStackingChoice && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <motion.div
+            initial={{ scale: mobileLowEffects ? 1 : 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: mobileLowEffects ? 1 : 0.9, opacity: 0 }}
+            transition={{ duration: mobileLowEffects ? 0.15 : 0.25 }}
+            className="bg-slate-900 border-2 border-red-500 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6 max-w-md w-[92vw]"
+            style={{ zIndex: MOBILE_Z_INDEX.modal }}
+          >
+            <h2 className="text-3xl font-black text-white uppercase italic tracking-wider">Incoming +{stackAccumulation}!</h2>
+            <p className="text-slate-400 text-center">You have a card that can stack! Do you want to play it or take the hit?</p>
+            <div className="grid grid-cols-2 gap-4 w-full">
+              <button
+                onClick={() => resolveStackChoice('take')}
+                className="p-4 rounded-xl bg-slate-800 text-white font-bold hover:bg-slate-700 transition border border-slate-600"
+              >
+                Take Hit (+{stackAccumulation})
+              </button>
+              <button
+                onClick={() => resolveStackChoice('stack')}
+                className="p-4 rounded-xl bg-gradient-to-r from-red-600 to-orange-600 text-white font-black hover:scale-105 transition shadow-lg"
+              >
+                STACK IT!
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
 
-    // Calculate limits for performance
-    const renderLimit = 15; // Increased for better fan effect
-    const displayCount = Math.min(player.cardCount, renderLimit);
+  const renderErrorToast = () => (
+    <AnimatePresence>
+      {error && (
+        <motion.div
+          initial={{ y: mobileLowEffects ? 8 : 50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: mobileLowEffects ? 8 : 50, opacity: 0 }}
+          transition={{ duration: mobileLowEffects ? 0.12 : 0.25 }}
+          className={clsx(
+            'absolute left-1/2 -translate-x-1/2 bg-red-600 text-white rounded-full font-bold shadow-xl z-[60] flex items-center gap-2',
+            isMobileViewport ? 'bottom-28 px-4 py-2 text-sm' : 'bottom-32 px-6 py-3'
+          )}
+        >
+          <MessageCircle size={18} />
+          {error}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
-    // Layout logic
-    const isTop = player.position === 'top';
-    const isLeft = player.position === 'left';
-    const isRight = player.position === 'right';
+  const renderActionBanner = () => (
+    <AnimatePresence mode="wait">
+      {lastAction && (
+        <motion.div
+          key={lastAction}
+          initial={{ y: mobileLowEffects ? -8 : -50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: mobileLowEffects ? -8 : -20, opacity: 0 }}
+          transition={{ duration: mobileLowEffects ? 0.14 : 0.25 }}
+          className={clsx(
+            'absolute z-40',
+            isMobileViewport
+              ? 'top-2 left-1/2 -translate-x-1/2 scale-90'
+              : isCompactViewport
+                ? 'top-2 left-1/2 -translate-x-1/2 scale-90'
+                : 'top-4 left-6'
+          )}
+        >
+          <div className="px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white font-medium shadow-lg flex items-center gap-2">
+            <div className={clsx('w-2 h-2 rounded-full bg-green-400', !mobileLowEffects && 'animate-pulse')} />
+            {lastAction}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
-    return (
-      <div
-        onClick={() => canSwap && swapHands(player.id)}
-        className={clsx(
-          "absolute flex flex-col items-center gap-4 transition-all duration-500 z-10",
-          isTop && "top-[-50px] left-1/2 -translate-x-1/2 flex-col-reverse", // Reverse for top so cards are below avatar
-          isLeft && "left-8 top-1/2 -translate-y-1/2 flex-row items-center",
-          isRight && "right-8 top-1/2 -translate-y-1/2 flex-row-reverse items-center",
-          canSwap && "cursor-pointer hover:scale-110 z-50 brightness-125"
-        )}
-      >
-        {/* Avatar & Info */}
-        <div className="relative flex flex-col items-center z-20">
-          <div className={clsx(
-            "relative p-1 rounded-full border-4 transition-all duration-300 bg-slate-900 shadow-xl group",
-            isTurn ? "border-yellow-400 shadow-[0_0_20px_5px_currentColor] scale-110" : "border-slate-700 opacity-60",
-            canSwap && "animate-pulse border-green-400"
-          )}>
-            <img src={player.avatar} className="w-20 h-20 rounded-full bg-slate-800 object-cover" alt={player.name} />
+  const renderDirectionMarkers = (mobile: boolean) => (
+    <div
+      className={clsx(
+        'pointer-events-none absolute left-1/2 -translate-x-1/2 -translate-y-1/2 z-30',
+        mobile
+          ? 'top-[35%] w-[58vw] min-w-[190px] max-w-[250px] h-[46vh] min-h-[280px] max-h-[360px]'
+          : isCompactViewport
+            ? 'top-1/2 w-[88vw] h-[52vh]'
+            : 'top-1/2 w-[80vw] h-[60vh]'
+      )}
+    >
+      {([
+        { key: 'bottom', pos: 'left-1/2 -translate-x-1/2 -bottom-3' },
+        { key: 'right', pos: 'right-[-15px] top-1/2 -translate-y-1/2' },
+        { key: 'top', pos: 'left-1/2 -translate-x-1/2 -top-3' },
+        { key: 'left', pos: 'left-[-15px] top-1/2 -translate-y-1/2' },
+      ] as const).map(marker => {
+        const rotationByDirection: Record<'cw' | 'ccw', Record<'bottom' | 'right' | 'top' | 'left', number>> = {
+          cw: {
+            bottom: 0,   // bawah -> kanan
+            right: -90,  // kanan -> atas
+            top: 180,    // atas -> kiri
+            left: 90,    // kiri -> bawah
+          },
+          ccw: {
+            bottom: 180, // bawah -> kiri
+            right: 90,   // kanan -> bawah
+            top: 0,      // atas -> kanan
+            left: -90,   // kiri -> atas
+          },
+        };
 
-            {/* Active Turn Badge */}
-            {isTurn && (
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-yellow-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse">
-                THINKING...
-              </div>
+        return (
+          <div
+            key={marker.key}
+            className={clsx(
+              'absolute rounded-full border border-white/25 bg-black/45 shadow-md',
+              marker.pos,
+              mobile ? 'p-1' : 'p-1.5'
             )}
-
-            {/* Enhanced Card Count Badge (Outside) */}
-            <div className={clsx(
-              "absolute -bottom-3 -right-3 w-10 h-10 rounded-full flex items-center justify-center font-black text-lg text-black shadow-lg border-2 border-white transform transition-transform group-hover:scale-110",
-              player.cardCount < 3 ? "bg-red-500 text-white animate-bounce" : "bg-white"
-            )}>
-              {player.cardCount}
+          >
+            <div style={{ transform: `rotate(${rotationByDirection[direction][marker.key]}deg)` }}>
+              <FlowArrowIcon size={mobile ? 24 : 28} />
             </div>
           </div>
-          <div className="mt-2 text-white font-bold bg-black/60 px-4 py-1 rounded-full backdrop-blur-md text-sm border border-white/10 shadow-lg">
-            {player.name}
-          </div>
-        </div>
-
-        {/* Fanned Cards */}
-        <div className={clsx(
-          "relative flex items-center justify-center",
-          isTop && "h-24 w-80 -mt-2",
-          (isLeft || isRight) && "h-80 w-24 -mx-4"
-        )}>
-          {Array.from({ length: displayCount }).map((_, i) => {
-            let style = {};
-            const totalArc = isTop ? 120 : 90;
-            const startAngle = -totalArc / 2;
-            const step = totalArc / (Math.max(displayCount, 1));
-            const angle = startAngle + (i * step);
-
-            if (isTop) {
-              // Arc Downwards
-              style = {
-                transform: `rotate(${angle}deg) translateY(40px)`,
-                transformOrigin: "top center",
-                zIndex: i
-              };
-            } else if (isLeft) {
-              // Vertical Arc (Rightwards)
-              style = {
-                transform: `rotate(${angle}deg) translateX(40px) rotate(90deg)`,
-                transformOrigin: "center left",
-                zIndex: i
-              };
-            } else if (isRight) {
-              // Vertical Arc (Leftwards)
-              style = {
-                transform: `rotate(${-angle}deg) translateX(-40px) rotate(-90deg)`,
-                transformOrigin: "center right",
-                zIndex: i
-              };
-            }
-
-            return (
-              <div key={i} className="absolute inset-0 flex items-center justify-center" style={{ ...style }}>
-                <Card isFaceDown size="xs" className="shadow-md border-white/20" />
-              </div>
-            )
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  // New State Store Selectors
-  const isStackingChoice = useGameStore(state => state.isStackingChoice);
-  const resolveStackChoice = useGameStore(state => state.resolveStackChoice);
-  const stackAccumulation = useGameStore(state => state.stackAccumulation);
-  const lastAction = useGameStore(state => state.lastAction);
+        );
+      })}
+    </div>
+  );
 
   if (winner) {
     if (winner === 'mercy_eliminated') {
@@ -182,104 +393,74 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
           <p className="text-2xl mb-8">Mercy Rule: Hand exceeded 25 cards.</p>
           <button onClick={() => initializeGame(mode)} className="px-8 py-3 bg-white text-black font-bold rounded-full hover:scale-105 transition">Try Again</button>
         </div>
-      )
+      );
     }
+
     return (
       <div className="w-full h-screen bg-black flex flex-col items-center justify-center text-white z-[100]">
         <h1 className="text-6xl font-black text-yellow-500 mb-4">WINNER!</h1>
         <p className="text-2xl mb-8">{players.find(p => p.id === winner)?.name} won the game!</p>
         <button onClick={() => initializeGame(mode)} className="px-8 py-3 bg-white text-black font-bold rounded-full hover:scale-105 transition">Play Again</button>
       </div>
-    )
+    );
   }
 
-  return (
-    <div className="relative w-full h-screen overflow-hidden bg-slate-950 flex flex-col">
-      {/* Background Ambience */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-slate-900 to-black z-0" />
+  if (isMobileViewport) {
+    const shouldGlowDrawPile = isUserTurn && !hasPlayableUserCard && !isStackingChoice && !isChoosingColor;
+    const mobileControlBottom = `calc(env(safe-area-inset-bottom, 0px) + ${isCompactViewport ? 70 : 60}px)`;
+    const mobileHandBottom = `calc(env(safe-area-inset-bottom, 0px) + ${isCompactViewport ? 160 : 138}px)`;
+    const mobileHandHeight = isCompactViewport ? 182 : 196;
 
-      {/* FX Layers */}
-      <FlyingCardLayer />
+    return (
+      <div className="relative w-full h-screen overflow-hidden bg-slate-950 text-white">
+        <div
+          className={clsx(
+            'absolute inset-0 z-0',
+            mobileLowEffects
+              ? 'bg-gradient-to-b from-slate-900 to-black'
+              : 'bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-slate-900 to-black'
+          )}
+        />
 
-      {/* Action Log Banner */}
-      <AnimatePresence mode='wait'>
-        {lastAction && (
-          <motion.div
-            key={lastAction}
-            initial={{ y: -50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -20, opacity: 0 }}
-            className="absolute top-8 left-1/2 -translate-x-1/2 z-40"
-          >
-            <div className="px-6 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white font-medium shadow-lg flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              {lastAction}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        <FlyingCardLayer isMobileViewport={isMobileViewport} lowEffects={mobileLowEffects || isMobileViewport} />
 
-      {/* Table Surface with Direction Ring */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        {/* Direction Ring */}
-        <motion.div
-          animate={{ rotate: direction === 'cw' ? 360 : -360 }}
-          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-          className="absolute w-[650px] h-[650px] rounded-full border border-white/5 border-dashed pointer-events-none opacity-20"
+        {renderActionBanner()}
+
+        <div
+          style={{ zIndex: MOBILE_Z_INDEX.table }}
+          className="absolute left-1/2 top-[35%] -translate-x-1/2 -translate-y-1/2 w-[58vw] min-w-[190px] max-w-[250px] h-[46vh] min-h-[280px] max-h-[360px] rounded-[28px] border-2 border-white/10 bg-green-900/20"
         >
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 bg-white/50 rounded-full blur-[2px]" />
-        </motion.div>
-
-        <div className="w-[80vw] h-[60vh] bg-green-900/20 rounded-[100px] border-8 border-white/5 backdrop-blur-sm relative shadow-2xl transform perspective-[2000px] rotate-x-12">
-
-          {/* Center Area */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-12">
-            {/* Draw Pile */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-2">
             <div
               onClick={() => isUserTurn && drawCard()}
               className={clsx(
-                "relative w-32 h-48 rounded-xl bg-slate-800 border-2 border-slate-600 shadow-xl cursor-pointer hover:scale-105 transition-transform group",
-                stackAccumulation > 0 && "animate-pulse shadow-[0_0_30px_rgba(255,0,0,0.5)] border-red-500"
+                'relative w-14 h-[84px] rounded-lg bg-slate-800 border-2 border-slate-600 transition-transform',
+                !mobileLowEffects && 'shadow-lg',
+                isUserTurn && 'cursor-pointer active:scale-95',
+                stackAccumulation > 0 && 'animate-pulse border-red-500',
+                shouldGlowDrawPile && 'animate-pulse border-yellow-300 shadow-[0_0_22px_rgba(250,204,21,0.65)]'
               )}
             >
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-24 h-36 rounded-lg bg-red-600/20 border border-white/10" />
+                <div className="w-10 h-14 rounded-lg bg-red-600/20 border border-white/10" />
               </div>
-              {/* Stack Indicator */}
-              {stackAccumulation > 0 && (
-                <div className="absolute -top-4 -right-4 w-12 h-12 bg-red-600 rounded-full flex items-center justify-center text-white font-black text-lg shadow-lg animate-bounce">
-                  +{stackAccumulation}
-                </div>
-              )}
             </div>
 
-            {/* Discard Pile */}
-            <div className="relative w-32 h-48">
-              <AnimatePresence mode='popLayout'>
-                {discardPile.slice(-5).map((card, i) => {
-                  // Determine entry position based on playedBy ID
-                  let initialX = 0;
-                  let initialY = -200; // Default fallback (fly down)
-
-                  if (card.playedBy === 'user') { initialX = 0; initialY = 500; }
-                  else if (card.playedBy === 'bot1') { initialX = 0; initialY = -500; } // Top
-                  else if (card.playedBy === 'bot2') { initialX = -500; initialY = 0; } // Left
-                  else if (card.playedBy === 'bot3') { initialX = 500; initialY = 0; } // Right
-
+            <div className="relative w-14 h-[84px]">
+              <AnimatePresence mode="popLayout">
+                {topDiscardCards.map((card, i) => {
+                  const deterministicRotate = (i - (topDiscardCards.length - 1) / 2) * 2;
                   return (
                     <motion.div
                       key={card.id}
-                      initial={{ scale: 0.5, x: initialX, y: initialY, opacity: 0, rotate: Math.random() * 180 }}
-                      animate={{ scale: 1, x: 0, y: 0, opacity: 1, rotate: (Math.random() - 0.5) * 20 }}
-                      exit={{ scale: 0.9, opacity: 0 }}
+                      initial={{ scale: mobileLowEffects ? 0.92 : 0.65, opacity: 0, y: mobileLowEffects ? -6 : -12 }}
+                      animate={{ scale: 1, opacity: 1, y: 0, rotate: deterministicRotate }}
+                      exit={{ scale: 0.96, opacity: 0 }}
                       className="absolute inset-0"
                       style={{ zIndex: i }}
-                      transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                      transition={{ duration: mobileLowEffects ? 0.12 : 0.2 }}
                     >
-                      <Card card={card} size="lg" shadow />
+                      <Card card={card} size="sm" lowEffects={mobileLowEffects} />
                     </motion.div>
                   );
                 })}
@@ -287,130 +468,226 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
             </div>
           </div>
         </div>
+
+        {renderDirectionMarkers(true)}
+
+        {!mobileLowEffects && (
+          <div
+            className={clsx(
+              'absolute top-[35%] left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full blur-[48px] opacity-25 pointer-events-none w-28 h-28',
+              activeColor === 'red' && 'bg-red-600',
+              activeColor === 'blue' && 'bg-blue-600',
+              activeColor === 'green' && 'bg-green-600',
+              activeColor === 'yellow' && 'bg-yellow-500',
+              activeColor === 'black' && 'bg-purple-900'
+            )}
+          />
+        )}
+
+        {opponents.map(player => (
+          <MobileOpponent key={player.id} player={player} isTurn={currentPlayerId === player.id} lowEffects={mobileLowEffects} />
+        ))}
+
+        {renderErrorToast()}
+
+        <div
+          style={{
+            zIndex: MOBILE_Z_INDEX.hand,
+            bottom: mobileHandBottom,
+            height: mobileHandHeight,
+          }}
+          className="absolute left-1/2 -translate-x-1/2 w-[calc(100vw-12px)] max-w-[680px] pointer-events-none"
+        >
+          <div className="w-full h-full pointer-events-auto">
+            <Hand
+              cards={userHand}
+              onPlayCard={playCard}
+              isCurrentTurn={isUserTurn}
+              cardSize="md"
+              isMobileLayout
+              lowEffects={mobileLowEffects}
+            />
+          </div>
+        </div>
+
+        <div
+          className="absolute left-0 right-0 px-4 flex items-end justify-between"
+          style={{ zIndex: MOBILE_Z_INDEX.uno, bottom: mobileControlBottom }}
+        >
+          <div
+            style={{ zIndex: MOBILE_Z_INDEX.avatar }}
+            className={clsx(
+              'flex items-center gap-2 transition-all duration-300',
+              isUserTurn ? 'scale-105' : 'opacity-85 grayscale-[0.2]'
+            )}
+          >
+            <div
+              className={clsx(
+                'relative p-1 rounded-full border-4 bg-slate-900',
+                isUserTurn ? 'border-green-400' : 'border-slate-600',
+                !mobileLowEffects && isUserTurn && 'shadow-[0_0_20px_5px_currentColor]',
+                !mobileLowEffects && 'shadow-xl'
+              )}
+            >
+              <img src={userPlayer?.avatar} className={clsx('rounded-full bg-slate-800 object-cover', isCompactViewport ? 'w-10 h-10' : 'w-11 h-11')} alt="You" />
+              {isUserTurn && (
+                <div className={clsx('absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap', !mobileLowEffects && 'animate-pulse')}>
+                  YOUR TURN
+                </div>
+              )}
+            </div>
+            <span className={clsx('text-white font-bold bg-black/50 rounded-full border border-white/10', isCompactViewport ? 'px-2.5 py-0.5 text-sm' : 'px-3 py-1')}>You</span>
+          </div>
+
+          <button
+            onClick={() => {}}
+            aria-disabled="true"
+            className={clsx(
+              'rounded-full font-black italic uppercase tracking-wider transition-transform active:scale-95 border-2 border-white/20',
+              !mobileLowEffects && 'shadow-2xl',
+              isCompactViewport ? 'px-4 py-2 text-base' : 'px-5 py-2.5 text-lg',
+              isNoMercy ? 'bg-gradient-to-r from-purple-600 to-red-600 text-white' : 'bg-gradient-to-r from-yellow-400 to-orange-500 text-black'
+            )}
+          >
+            UNO!
+          </button>
+        </div>
+
+        {renderStackModal()}
+
+        <ColorPickerModal isOpen={isChoosingColor} onSelectColor={confirmColorSelection} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative w-full h-screen overflow-hidden bg-slate-950 text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-slate-900 to-black z-0" />
+      <FlyingCardLayer lowEffects={prefersReducedMotion} />
+
+      {renderActionBanner()}
+
+      <div className="absolute inset-0 flex items-center justify-center">
+        {!prefersReducedMotion && (
+          <motion.div
+            animate={{ rotate: direction === 'cw' ? 360 : -360 }}
+            transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}
+            className={clsx(
+              'absolute rounded-full border border-white/5 border-dashed pointer-events-none opacity-20',
+              isCompactViewport ? 'w-[500px] h-[500px]' : 'w-[650px] h-[650px]'
+            )}
+          />
+        )}
+
+        <div
+          className={clsx(
+            'bg-green-900/20 border border-white/10 backdrop-blur-sm shadow-2xl relative',
+            isCompactViewport ? 'w-[88vw] h-[52vh] rounded-[72px] border-8' : 'w-[80vw] h-[60vh] rounded-[100px] border-8'
+          )}
+        >
+          <div className={clsx('absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center', isCompactViewport ? 'gap-8' : 'gap-12')}>
+            <div
+              onClick={() => isUserTurn && drawCard()}
+              className={clsx(
+                'relative rounded-xl bg-slate-800 border-2 border-slate-600 shadow-xl transition-transform group',
+                isCompactViewport ? 'w-24 h-36' : 'w-32 h-48',
+                isUserTurn && 'cursor-pointer active:scale-95',
+                stackAccumulation > 0 && 'animate-pulse border-red-500 shadow-[0_0_30px_rgba(255,0,0,0.5)]'
+              )}
+            >
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className={clsx('rounded-lg bg-red-600/20 border border-white/10', isCompactViewport ? 'w-16 h-24' : 'w-24 h-36')} />
+              </div>
+            </div>
+
+            <div className={clsx('relative', isCompactViewport ? 'w-24 h-36' : 'w-32 h-48')}>
+              <AnimatePresence mode="popLayout">
+                {topDiscardCards.map((card, i) => (
+                  <motion.div
+                    key={card.id}
+                    initial={{ scale: 0.5, opacity: 0, y: -20 }}
+                    animate={{ scale: 1, opacity: 1, y: 0, rotate: (Math.random() - 0.5) * 14 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    className="absolute inset-0"
+                    style={{ zIndex: i }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                  >
+                    <Card card={card} size={isCompactViewport ? 'md' : 'lg'} lowEffects={prefersReducedMotion} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Active Color Indicator (When Wild/Black is top) */}
-      <div className={clsx(
-        "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 rounded-full blur-[100px] -z-10 transition-colors duration-1000 opacity-50 pointer-events-none",
-        activeColor === 'red' && "bg-red-600",
-        activeColor === 'blue' && "bg-blue-600",
-        activeColor === 'green' && "bg-green-600",
-        activeColor === 'yellow' && "bg-yellow-500",
-        activeColor === 'black' && "bg-purple-900", // Fallback/Dark
-      )} />
+      {renderDirectionMarkers(false)}
 
-      {/* Opponents */}
-      {players.filter(p => p.id !== 'user').map(player => (
-        <Opponent key={player.id} player={player} />
+      <div
+        className={clsx(
+          'absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full blur-[100px] opacity-50 pointer-events-none',
+          'w-48 h-48',
+          activeColor === 'red' && 'bg-red-600',
+          activeColor === 'blue' && 'bg-blue-600',
+          activeColor === 'green' && 'bg-green-600',
+          activeColor === 'yellow' && 'bg-yellow-500',
+          activeColor === 'black' && 'bg-purple-900'
+        )}
+      />
+
+      {opponents.map(player => (
+        <DesktopOpponent key={player.id} player={player} isTurn={currentPlayerId === player.id} isCompactViewport={isCompactViewport} />
       ))}
 
-      {/* Stack Choice Modal */}
-      <AnimatePresence>
-        {isStackingChoice && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-slate-900 border-2 border-red-500 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6 max-w-md w-full"
-            >
-              <h2 className="text-3xl font-black text-white uppercase italic tracking-wider">Incoming +{stackAccumulation}!</h2>
-              <p className="text-slate-400 text-center">You have a card that can stack! Do you want to play it or take the hit?</p>
+      {renderErrorToast()}
 
-              <div className="grid grid-cols-2 gap-4 w-full">
-                <button
-                  onClick={() => resolveStackChoice('take')}
-                  className="p-4 rounded-xl bg-slate-800 text-white font-bold hover:bg-slate-700 transition border border-slate-600"
-                >
-                  Take Hit (+{stackAccumulation})
-                </button>
-                <button
-                  onClick={() => resolveStackChoice('stack')}
-                  className="p-4 rounded-xl bg-gradient-to-r from-red-600 to-orange-600 text-white font-black hover:scale-105 transition shadow-lg"
-                >
-                  STACK IT!
-                </button>
-              </div>
-            </motion.div>
-          </div>
+      <div
+        className={clsx(
+          'absolute left-1/2 -translate-x-1/2 flex items-end justify-center z-50 pointer-events-none',
+          isCompactViewport ? 'bottom-14 h-40 w-[94vw]' : 'bottom-20 h-44 w-[78vw]'
         )}
-      </AnimatePresence>
-
-      {/* Error Toast */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ y: 50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 50, opacity: 0 }}
-            className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full font-bold shadow-xl z-50 flex items-center gap-2"
-          >
-            <MessageCircle size={20} />
-            {error}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Hand Swap Prompt */}
-      <AnimatePresence>
-        {isSwapping && isUserTurn && (
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur text-white px-8 py-4 rounded-full font-bold text-xl border border-white/20 shadow-2xl z-50"
-          >
-            Select a player to swap hands!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* User Hand Area */}
-      <div className="absolute bottom-0 left-0 right-0 h-48 flex items-end justify-center z-50 pointer-events-none">
-        <div className="w-full max-w-3xl pointer-events-auto px-4 pb-4">
+      >
+        <div className="w-full max-w-4xl pointer-events-auto px-2">
           <Hand
             cards={userPlayer?.hand || []}
             onPlayCard={playCard}
             isCurrentTurn={isUserTurn}
+            cardSize={isCompactViewport ? 'sm' : 'md'}
+            lowEffects={prefersReducedMotion}
           />
         </div>
       </div>
 
-      {/* User Avatar & Status (Bottom Left) */}
-      <div className={clsx(
-        "absolute bottom-8 left-8 flex flex-col items-center gap-2 z-50 transition-all duration-300",
-        isUserTurn ? "scale-110" : "opacity-80 grayscale-[0.3]"
-      )}>
-        <div className={clsx(
-          "relative p-1 rounded-full border-4 bg-slate-900 shadow-xl",
-          isUserTurn ? "border-green-400 shadow-[0_0_20px_5px_currentColor]" : "border-slate-600"
-        )}>
-          <img src={userPlayer?.avatar} className="w-16 h-16 rounded-full bg-slate-800 object-cover" alt="You" />
-          {isUserTurn && (
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-black text-[10px] font-black px-2 py-0.5 rounded-full whitespace-nowrap animate-pulse">
-              YOUR TURN
-            </div>
-          )}
+      <div
+        className={clsx(
+          'absolute flex flex-col items-center gap-2 z-50 transition-all duration-300',
+          isCompactViewport ? 'bottom-2 left-3' : 'bottom-4 left-6',
+          isUserTurn ? 'scale-110' : 'opacity-80 grayscale-[0.3]'
+        )}
+      >
+        <div className={clsx('relative p-1 rounded-full border-4 bg-slate-900 shadow-xl', isUserTurn ? 'border-green-400 shadow-[0_0_20px_5px_currentColor]' : 'border-slate-600')}>
+          <img src={userPlayer?.avatar} className={clsx('rounded-full bg-slate-800 object-cover', isCompactViewport ? 'w-14 h-14' : 'w-16 h-16')} alt="You" />
         </div>
         <span className="text-white font-bold bg-black/50 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10">You</span>
       </div>
 
-      <div className="absolute bottom-6 right-6 z-50">
+      <div className={clsx('absolute z-50', isCompactViewport ? 'bottom-3 right-3' : 'bottom-5 right-5')}>
         <button
-          onClick={() => isUserTurn && playCard('uno-shout')}
+          onClick={() => {}}
+          aria-disabled="true"
           className={clsx(
-            "px-8 py-4 rounded-full font-black text-xl italic uppercase tracking-wider shadow-2xl transition-transform active:scale-95 hover:scale-105 border-4 border-white/20",
-            isNoMercy ? "bg-gradient-to-r from-purple-600 to-red-600 text-white" : "bg-gradient-to-r from-yellow-400 to-orange-500 text-black"
-          )}>
+            'rounded-full font-black italic uppercase tracking-wider shadow-2xl transition-transform active:scale-95 border-4 border-white/20',
+            'px-8 py-4 text-xl',
+            isNoMercy ? 'bg-gradient-to-r from-purple-600 to-red-600 text-white' : 'bg-gradient-to-r from-yellow-400 to-orange-500 text-black'
+          )}
+        >
           UNO!
         </button>
       </div>
 
-      <ColorPickerModal
-        isOpen={isChoosingColor}
-        onSelectColor={confirmColorSelection}
-      />
+      {renderStackModal()}
 
+      <ColorPickerModal isOpen={isChoosingColor} onSelectColor={confirmColorSelection} />
     </div>
   );
 };

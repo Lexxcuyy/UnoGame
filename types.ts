@@ -13,7 +13,8 @@ export type CardType =
   | 'draw6' // No Mercy
   | 'draw10' // No Mercy
   | 'skipAll' // No Mercy
-  | 'discardAll'; // No Mercy
+  | 'discardAll' // No Mercy
+  | 'x2'; // No Mercy stack multiplier
 
 export interface ICard {
   id: string;
