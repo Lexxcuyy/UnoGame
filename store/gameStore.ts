@@ -4,6 +4,11 @@ import { getBestMove } from '../utils/aiLogic';
 
 // --- Constants & Types ---
 
+export type GameEvent =
+  | { type: 'draw', playerId: string, count: number }
+  | { type: 'play', playerId: string, cardId: string }
+  | { type: 'stack', playerId: string, count: number };
+
 interface GameState {
   deck: ICard[];
   discardPile: ICard[];
@@ -22,11 +27,19 @@ interface GameState {
   isSwapping: boolean; // 7 Rule
   error: string | null;
 
+  // Visual Events
+  lastEvent: GameEvent | null;
+  clearLastEvent: () => void;
+
+  // Stacking Logic (Choice)
+  isStackingChoice: boolean; // Triggers UI Modal for User
+  resolveStackChoice: (choice: 'stack' | 'take') => void;
+
   // Actions
   initializeGame: (mode: GameMode) => void;
   playCard: (cardId: string) => void;
   confirmColorSelection: (color: CardColor) => void; // New Action
-  drawCard: () => void;
+  drawCard: (forcedCount?: number) => void;
   passTurn: () => void;
   resetGame: () => void;
   aiPlay: () => void;
@@ -108,6 +121,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   pendingCardPlayed: null,
   isSwapping: false,
   error: null,
+  lastEvent: null,
+  isStackingChoice: false,
 
   initializeGame: (mode: GameMode) => {
     const deck = generateDeck(mode);
@@ -141,10 +156,13 @@ export const useGameStore = create<GameState>((set, get) => ({
       isChoosingColor: false,
       pendingCardPlayed: null,
       isSwapping: false,
-      error: null
+      error: null,
+      lastEvent: null,
+      isStackingChoice: false
     });
   },
 
+  clearLastEvent: () => set({ lastEvent: null }),
   clearError: () => set({ error: null }),
 
   playCard: (cardId: string) => {
@@ -284,8 +302,24 @@ export const useGameStore = create<GameState>((set, get) => ({
     get().doPlayCardInternal(pendingCardPlayed, idx, color);
   },
 
+  resolveStackChoice: (choice: 'stack' | 'take') => {
+    const { currentPlayerId, stackAccumulation } = get();
+    // Verify it's the user
+    if (currentPlayerId !== 'user') return;
+
+    if (choice === 'take') {
+      get().drawCard(stackAccumulation);
+      set({ isStackingChoice: false, stackAccumulation: 0 }); // Reset stack
+      get().passTurn();
+    } else {
+      // User chose to stack - UI handles the card play interaction
+      // Just close the modal
+      set({ isStackingChoice: false });
+    }
+  },
+
   advanceTurn: (skip: boolean) => {
-    const { players, currentPlayerId, direction } = get();
+    const { players, currentPlayerId, direction, stackAccumulation, gameMode, deck, discardPile } = get();
     let idx = players.findIndex(p => p.id === currentPlayerId);
     const move = direction === 'cw' ? 1 : -1;
     let steps = 1;
@@ -294,10 +328,47 @@ export const useGameStore = create<GameState>((set, get) => ({
     idx = (idx + move * steps) % players.length;
     if (idx < 0) idx += players.length;
 
-    set({ currentPlayerId: players[idx].id });
+    const nextPlayer = players[idx];
+    set({ currentPlayerId: nextPlayer.id });
+
+    // --- Stacking / Auto-Hit Logic ---
+    if (stackAccumulation > 0) {
+      // Check if next player has a valid counter
+      const topCard = discardPile[discardPile.length - 1]; // Actually recent played card
+
+      const hasCounter = nextPlayer.hand!.some(card => {
+        if (gameMode === 'no-mercy') {
+          const getPower = (c: ICard) => {
+            if (c.type === 'draw2') return 2;
+            if (c.type === 'draw4') return 4;
+            if (c.type === 'draw6') return 6;
+            if (c.type === 'draw10') return 10;
+            return 0;
+          };
+          return getPower(card) >= ((topCard.type.startsWith('draw') ? getPower(topCard) : 0));
+        } else {
+          return card.type === 'draw2' || card.type === 'draw4' || card.type === 'draw6' || card.type === 'draw10';
+        }
+      });
+
+      if (hasCounter) {
+        if (!nextPlayer.isBot) {
+          // User: Show Choice Modal
+          set({ isStackingChoice: true });
+        }
+        // Bots: Will handle in aiPlay (they prioritize stacking)
+      } else {
+        // No Counter: Auto-Hit
+        setTimeout(() => {
+          get().drawCard(stackAccumulation);
+          set({ stackAccumulation: 0 }); // Reset stack AFTER draw
+          get().passTurn();
+        }, 1000); // Delay for user to see whose turn it is
+      }
+    }
   },
 
-  drawCard: () => {
+  drawCard: (forcedCount?: number) => {
     const { deck, discardPile, players, currentPlayerId, stackAccumulation, gameMode } = get();
     const playerIndex = players.findIndex(p => p.id === currentPlayerId);
     if (playerIndex === -1) return;
@@ -312,12 +383,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       newDiscard = [top];
     }
 
-    const drawAmount = stackAccumulation > 0 ? stackAccumulation : 1;
+    const drawAmount = forcedCount || (stackAccumulation > 0 ? stackAccumulation : 1);
     const drawnCards: ICard[] = [];
     for (let i = 0; i < drawAmount; i++) {
       if (newDeck.length === 0) break;
       drawnCards.push(newDeck.shift()!);
     }
+
+    // Emit Event
+    set({ lastEvent: { type: 'draw', playerId: currentPlayerId, count: drawAmount } });
 
     const player = players[playerIndex];
     const newHand = [...player.hand!, ...drawnCards];

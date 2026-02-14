@@ -7,6 +7,7 @@ import { ArrowLeft, MoreVertical, MessageCircle, Smile, Send, Clock, RefreshCw }
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx } from 'clsx';
 import ColorPickerModal from './ColorPickerModal';
+import FlyingCardLayer from './FlyingCardLayer';
 
 interface GameBoardProps {
   mode: 'classic' | 'no-mercy';
@@ -22,7 +23,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
     initializeGame,
     playCard,
     drawCard,
-    stackAccumulation,
+    // stackAccumulation, // Accessed via selector below
     passTurn,
     aiPlay,
     error,
@@ -54,103 +55,99 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
   const isUserTurn = currentPlayerId === 'user';
   const isNoMercy = mode === 'no-mercy';
 
-  // Opponent Component
-  const Opponent = ({ player }: { player: Player }) => {
+  // Opponent Component (Refactored for Fan Layout)
+  const Opponent: React.FC<{ player: Player }> = ({ player }) => {
     const isTurn = currentPlayerId === player.id;
     const canSwap = isSwapping && isUserTurn && player.id !== 'user';
 
     // Calculate limits for performance
-    const renderLimit = 10;
+    const renderLimit = 15; // Increased for better fan effect
     const displayCount = Math.min(player.cardCount, renderLimit);
 
     // Layout logic
     const isTop = player.position === 'top';
-    const isSide = player.position === 'left' || player.position === 'right';
+    const isLeft = player.position === 'left';
+    const isRight = player.position === 'right';
 
     return (
       <div
         onClick={() => canSwap && swapHands(player.id)}
         className={clsx(
           "absolute flex flex-col items-center gap-4 transition-all duration-500 z-10",
-          player.position === 'top' && "top-[-40px] left-1/2 -translate-x-1/2", // Pull top player up a bit
-          player.position === 'left' && "left-8 top-1/2 -translate-y-1/2 items-start",
-          player.position === 'right' && "right-8 top-1/2 -translate-y-1/2 items-end",
+          isTop && "top-[-50px] left-1/2 -translate-x-1/2 flex-col-reverse", // Reverse for top so cards are below avatar
+          isLeft && "left-8 top-1/2 -translate-y-1/2 flex-row items-center",
+          isRight && "right-8 top-1/2 -translate-y-1/2 flex-row-reverse items-center",
           canSwap && "cursor-pointer hover:scale-110 z-50 brightness-125"
         )}
       >
         {/* Avatar & Info */}
-        <div className="relative flex flex-col items-center">
+        <div className="relative flex flex-col items-center z-20">
           <div className={clsx(
-            "relative p-1 rounded-full border-4 transition-colors z-20 bg-slate-900",
-            isTurn ? "border-yellow-400 shadow-[0_0_20px_rgba(250,204,21,0.6)]" : "border-slate-700",
+            "relative p-1 rounded-full border-4 transition-colors bg-slate-900 shadow-xl",
+            isTurn ? "border-yellow-400 shadow-[0_0_30px_rgba(250,204,21,0.6)]" : "border-slate-700",
             canSwap && "animate-pulse border-green-400"
           )}>
-            <img src={player.avatar} className="w-16 h-16 rounded-full bg-slate-800" alt={player.name} />
-            <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-slate-900 border-2 border-slate-600 flex items-center justify-center font-bold text-sm text-white">
+            <img src={player.avatar} className="w-16 h-16 rounded-full bg-slate-800 object-cover" alt={player.name} />
+            <div className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-slate-900 border-2 border-slate-600 flex items-center justify-center font-bold text-sm text-white shadow-md">
               {player.cardCount}
             </div>
           </div>
-          <div className="mt-1 text-white font-bold bg-black/60 px-3 py-0.5 rounded-full backdrop-blur-md text-sm border border-white/10">
+          <div className="mt-2 text-white font-bold bg-black/60 px-3 py-0.5 rounded-full backdrop-blur-md text-xs border border-white/10 shadow-lg">
             {player.name}
           </div>
         </div>
 
         {/* Fanned Cards */}
         <div className={clsx(
-          "relative flex justify-center",
-          isTop ? "h-24 w-64 -mt-4 opacity-90" : "h-64 w-24 -mt-8 opacity-90"
+          "relative flex items-center justify-center",
+          isTop && "h-24 w-80 -mt-2",
+          (isLeft || isRight) && "h-80 w-24 -mx-4"
         )}>
           {Array.from({ length: displayCount }).map((_, i) => {
-            // Top: Horizontal Arc
-            // Sides: Vertical Arc/Stack
             let style = {};
+            const totalArc = isTop ? 120 : 90;
+            const startAngle = -totalArc / 2;
+            const step = totalArc / (Math.max(displayCount, 1));
+            const angle = startAngle + (i * step);
 
             if (isTop) {
-              const spread = Math.min(player.cardCount * 5, 120);
-              const start = -spread / 2;
-              const step = spread / (displayCount - 1 || 1);
-              const rotation = start + (i * step);
+              // Arc Downwards
               style = {
-                transform: `rotate(${rotation}deg) translateY(${i * 1}px)`,
+                transform: `rotate(${angle}deg) translateY(40px)`,
+                transformOrigin: "top center",
                 zIndex: i
               };
-              return (
-                <div key={i} className="absolute origin-top" style={style}>
-                  <Card isFaceDown size="sm" className="shadow-lg border-white/10" />
-                </div>
-              )
-            } else {
-              // Sides
-              const isRight = player.position === 'right';
-              const spread = Math.min(player.cardCount * 15, 60);
-              const start = -spread / 2;
-              const step = spread / (displayCount - 1 || 1);
-              const rotation = start + (i * step);
-
+            } else if (isLeft) {
+              // Vertical Arc (Rightwards)
               style = {
-                transform: `rotate(${isRight ? -90 + rotation : 90 + rotation}deg) translateX(${i * -2}px)`,
+                transform: `rotate(${angle}deg) translateX(40px) rotate(90deg)`,
+                transformOrigin: "center left",
                 zIndex: i
               };
-
-              return (
-                <div key={i} className="absolute origin-center" style={style}>
-                  <Card isFaceDown size="sm" className="shadow-lg border-white/10" />
-                </div>
-              )
+            } else if (isRight) {
+              // Vertical Arc (Leftwards)
+              style = {
+                transform: `rotate(${-angle}deg) translateX(-40px) rotate(-90deg)`,
+                transformOrigin: "center right",
+                zIndex: i
+              };
             }
-          })}
-          {/* Overflow Indicator */}
-          {player.cardCount > renderLimit && (
-            <div className="absolute inset-0 flex items-center justify-center z-50">
-              <div className="bg-black/80 text-white text-xs font-bold px-2 py-1 rounded-full border border-white/20">
-                +{player.cardCount - renderLimit}
+
+            return (
+              <div key={i} className="absolute inset-0 flex items-center justify-center" style={{ ...style }}>
+                <Card isFaceDown size="xs" className="shadow-md border-white/20" />
               </div>
-            </div>
-          )}
+            )
+          })}
         </div>
       </div>
     );
   };
+
+  // New State Store Selectors
+  const isStackingChoice = useGameStore(state => state.isStackingChoice);
+  const resolveStackChoice = useGameStore(state => state.resolveStackChoice);
+  const stackAccumulation = useGameStore(state => state.stackAccumulation); // Single source of truth
 
   if (winner) {
     if (winner === 'mercy_eliminated') {
@@ -175,6 +172,9 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
     <div className="relative w-full h-screen overflow-hidden bg-slate-950 flex flex-col">
       {/* Background Ambience */}
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-slate-900 to-black z-0" />
+
+      {/* FX Layers */}
+      <FlyingCardLayer />
 
       {/* Table Surface */}
       <div className="absolute inset-0 flex items-center justify-center">
@@ -236,6 +236,38 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
       {players.filter(p => p.id !== 'user').map(player => (
         <Opponent key={player.id} player={player} />
       ))}
+
+      {/* Stack Choice Modal */}
+      <AnimatePresence>
+        {isStackingChoice && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-slate-900 border-2 border-red-500 p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6 max-w-md w-full"
+            >
+              <h2 className="text-3xl font-black text-white uppercase italic tracking-wider">Incoming +{stackAccumulation}!</h2>
+              <p className="text-slate-400 text-center">You have a card that can stack! Do you want to play it or take the hit?</p>
+
+              <div className="grid grid-cols-2 gap-4 w-full">
+                <button
+                  onClick={() => resolveStackChoice('take')}
+                  className="p-4 rounded-xl bg-slate-800 text-white font-bold hover:bg-slate-700 transition border border-slate-600"
+                >
+                  Take Hit (+{stackAccumulation})
+                </button>
+                <button
+                  onClick={() => resolveStackChoice('stack')}
+                  className="p-4 rounded-xl bg-gradient-to-r from-red-600 to-orange-600 text-white font-black hover:scale-105 transition shadow-lg"
+                >
+                  STACK IT!
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Error Toast */}
       <AnimatePresence>
