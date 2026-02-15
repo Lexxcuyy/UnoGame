@@ -4,9 +4,12 @@ import { User, Settings, Zap, Users, Trophy, MessageSquare, ShoppingBag, Home } 
 
 interface MainMenuProps {
   onStartGame: (mode: GameMode) => void;
+  onOpenFriends: () => void;
+  profileName: string;
+  onProfileNameChange: (name: string) => void;
 }
 
-const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
+const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, onOpenFriends, profileName, onProfileNameChange }) => {
   return (
     <div className="relative h-full w-full flex flex-col bg-slate-900">
       {/* Background Ambience */}
@@ -18,15 +21,20 @@ const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
       <header className="relative z-10 pt-12 px-6 pb-4 flex justify-between items-center">
         <div className="flex items-center gap-3 bg-slate-800/80 backdrop-blur-md p-2 rounded-full pr-6 border border-white/5 shadow-lg">
           <div className="relative">
-            <img 
-              src="https://picsum.photos/100/100" 
+            <img
+              src="https://picsum.photos/100/100"
               alt="Avatar" 
               className="w-10 h-10 rounded-full border-2 border-white/20"
             />
             <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-800 rounded-full"></div>
           </div>
           <div>
-            <div className="text-sm font-bold text-white">Felix_Gamer</div>
+            <input
+              value={profileName}
+              onChange={e => onProfileNameChange(e.target.value)}
+              maxLength={24}
+              className="text-sm font-bold text-white bg-transparent outline-none w-[120px]"
+            />
             <div className="text-xs text-yellow-400 font-bold flex items-center gap-1">
               <span>$</span> 2,450
             </div>
@@ -102,7 +110,10 @@ const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
 
         {/* Secondary Options */}
         <div className="grid grid-cols-2 gap-4 mt-2">
-          <button className="bg-slate-800 p-4 rounded-2xl flex flex-col items-center justify-center gap-2 hover:bg-slate-700 transition-colors border border-white/5">
+          <button
+            onClick={onOpenFriends}
+            className="bg-slate-800 p-4 rounded-2xl flex flex-col items-center justify-center gap-2 hover:bg-slate-700 transition-colors border border-white/5"
+          >
             <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center text-green-500">
               <Users size={20} />
             </div>

@@ -41,7 +41,7 @@ export const getBestMove = (
     // 3. Choose Color if Wild
     // If we play a Black card (Wild, Draw4, Draw10), we MUST choose a color.
     let chosenColor: CardColor | undefined = undefined;
-    if (bestCard.color === 'black' || bestCard.type === 'wild' || bestCard.type === 'wild4' || bestCard.type === 'draw4' || bestCard.type === 'draw10') {
+    if (bestCard.color === 'black') {
         // Pick color with most cards in hand
         const counts = { red: 0, blue: 0, green: 0, yellow: 0 };
         hand.forEach(c => {

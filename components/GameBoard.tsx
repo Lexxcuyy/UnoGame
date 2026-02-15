@@ -13,6 +13,10 @@ import { canPlayCard } from '../utils/rules';
 interface GameBoardProps {
   mode: 'classic' | 'no-mercy';
   onExit?: () => void;
+  onlineMode?: boolean;
+  onOnlinePlayCard?: (cardId: string) => void;
+  onOnlineDrawCard?: () => void;
+  onOnlineConfirmColor?: (color: 'red' | 'yellow' | 'green' | 'blue') => void;
 }
 
 const MOBILE_BREAKPOINT = 768;
@@ -186,7 +190,13 @@ const DesktopOpponent = React.memo(({ player, isTurn, isCompactViewport }: Deskt
 
 DesktopOpponent.displayName = 'DesktopOpponent';
 
-const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
+const GameBoard: React.FC<GameBoardProps> = ({
+  mode,
+  onlineMode = false,
+  onOnlinePlayCard,
+  onOnlineDrawCard,
+  onOnlineConfirmColor,
+}) => {
   const [isCompactViewport, setIsCompactViewport] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
 
@@ -196,13 +206,13 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
   const direction = useGameStore(state => state.direction);
   const winner = useGameStore(state => state.winner);
   const initializeGame = useGameStore(state => state.initializeGame);
-  const playCard = useGameStore(state => state.playCard);
-  const drawCard = useGameStore(state => state.drawCard);
+  const localPlayCard = useGameStore(state => state.playCard);
+  const localDrawCard = useGameStore(state => state.drawCard);
   const aiPlay = useGameStore(state => state.aiPlay);
   const error = useGameStore(state => state.error);
   const activeColor = useGameStore(state => state.activeColor);
   const isChoosingColor = useGameStore(state => state.isChoosingColor);
-  const confirmColorSelection = useGameStore(state => state.confirmColorSelection);
+  const localConfirmColorSelection = useGameStore(state => state.confirmColorSelection);
   const isStackingChoice = useGameStore(state => state.isStackingChoice);
   const resolveStackChoice = useGameStore(state => state.resolveStackChoice);
   const stackAccumulation = useGameStore(state => state.stackAccumulation);
@@ -211,9 +221,35 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
   const prefersReducedMotion = useReducedMotion() ?? false;
   const mobileLowEffects = isMobileViewport || prefersReducedMotion;
 
+  const playCard = React.useCallback((cardId: string) => {
+    if (onlineMode) {
+      onOnlinePlayCard?.(cardId);
+      return;
+    }
+    localPlayCard(cardId);
+  }, [onlineMode, onOnlinePlayCard, localPlayCard]);
+
+  const drawCard = React.useCallback(() => {
+    if (onlineMode) {
+      onOnlineDrawCard?.();
+      return;
+    }
+    localDrawCard();
+  }, [onlineMode, onOnlineDrawCard, localDrawCard]);
+
+  const confirmColorSelection = React.useCallback((color: 'red' | 'yellow' | 'green' | 'blue') => {
+    if (onlineMode) {
+      onOnlineConfirmColor?.(color);
+      return;
+    }
+    localConfirmColorSelection(color);
+  }, [onlineMode, onOnlineConfirmColor, localConfirmColorSelection]);
+
   useEffect(() => {
-    initializeGame(mode);
-  }, [mode, initializeGame]);
+    if (!onlineMode) {
+      initializeGame(mode);
+    }
+  }, [mode, initializeGame, onlineMode]);
 
   useEffect(() => {
     const updateViewportMode = () => {
@@ -227,7 +263,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
 
   useEffect(() => {
     const currentPlayer = players.find(p => p.id === currentPlayerId);
-    if (currentPlayer?.isBot && !winner) {
+    if (!onlineMode && currentPlayer?.isBot && !winner) {
       const timer = setTimeout(() => aiPlay(), 1200);
       const safetyTimer = setTimeout(() => aiPlay(), 3500);
       return () => {
@@ -235,7 +271,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ mode }) => {
         clearTimeout(safetyTimer);
       };
     }
-  }, [currentPlayerId, winner, players, aiPlay]);
+  }, [currentPlayerId, winner, players, aiPlay, onlineMode]);
 
   const userPlayer = useMemo(() => players.find(p => p.id === 'user'), [players]);
   const opponents = useMemo(() => players.filter(p => p.id !== 'user'), [players]);

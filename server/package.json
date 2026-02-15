@@ -1,0 +1,16 @@
+{
+    "name": "uno-server",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "start": "node index.mjs"
+    },
+    "dependencies": {
+        "cors": "^2.8.6",
+        "express": "^5.2.1",
+        "socket.io": "^4.8.3"
+    },
+    "engines": {
+        "node": ">=18"
+    }
+}

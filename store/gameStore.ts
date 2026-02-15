@@ -107,31 +107,39 @@ const generateDeck = (mode: GameMode): ICard[] => {
     }
   };
 
-  COLORS.forEach(color => {
-    addCard(color, 'number', 0, 1);
-    for (let i = 1; i <= 9; i++) addCard(color, 'number', i, 2);
-    addCard(color, 'skip', undefined, 2);
-    addCard(color, 'reverse', undefined, 2);
-    addCard(color, 'draw2', undefined, 2);
-  });
-
-  addCard('black', 'wild', undefined, 4);
-  addCard('black', 'draw4', undefined, 4);
-
   if (mode === 'no-mercy') {
+    // === UNO No Mercy deck: 168 cards ===
+    // Numbers: 2 of each 0-9 per color = 80
     COLORS.forEach(color => {
+      addCard(color, 'number', 0, 2);
+      for (let i = 1; i <= 9; i++) addCard(color, 'number', i, 2);
+    });
+    // Action cards (colored)
+    COLORS.forEach(color => {
+      addCard(color, 'skip', undefined, 3);       // 12
+      addCard(color, 'reverse', undefined, 3);     // 12
+      addCard(color, 'draw2', undefined, 2);       // 8
+      addCard(color, 'draw4', undefined, 2);       // 8  (colored, not wild)
+      addCard(color, 'skipAll', undefined, 2);     // 8
+      addCard(color, 'discardAll', undefined, 3);  // 12
+    });
+    // Wild cards
+    addCard('black', 'wild', undefined, 14);       // 14 (includes substitutes for unimplemented wild types)
+    addCard('black', 'draw6', undefined, 8);       // 8
+    addCard('black', 'draw10', undefined, 4);      // 4
+    addCard('black', 'x2', undefined, 2);          // 2  (custom)
+    // Total: 80+12+12+8+8+8+12+14+8+4+2 = 168
+  } else {
+    // === Classic UNO deck: 108 cards ===
+    COLORS.forEach(color => {
+      addCard(color, 'number', 0, 1);
+      for (let i = 1; i <= 9; i++) addCard(color, 'number', i, 2);
       addCard(color, 'skip', undefined, 2);
       addCard(color, 'reverse', undefined, 2);
       addCard(color, 'draw2', undefined, 2);
     });
-    addCard('red', 'draw6', undefined, 2);
-    addCard('blue', 'draw6', undefined, 2);
-    addCard('green', 'draw6', undefined, 2);
-    addCard('yellow', 'draw6', undefined, 2);
-    addCard('black', 'draw10', undefined, 4);
-    addCard('black', 'x2', undefined, 4);
-    COLORS.forEach(color => addCard(color, 'skipAll', undefined, 1));
-    COLORS.forEach(color => addCard(color, 'discardAll', undefined, 1));
+    addCard('black', 'wild', undefined, 4);
+    addCard('black', 'draw4', undefined, 4);
   }
 
   return shuffle(deck);
@@ -237,7 +245,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }
 
     // --- Pending Color Choice for User ---
-    if (!player.isBot && ((card.color === 'black' && card.type !== 'x2') || card.type.startsWith('wild') || card.type === 'draw4' || card.type === 'draw10')) {
+    if (!player.isBot && (card.color === 'black' && card.type !== 'x2')) {
       set({ isChoosingColor: true, pendingCardPlayed: card });
       return;
     }
@@ -379,16 +387,16 @@ export const useGameStore = create<GameState>((set, get) => ({
     let newDeck = [...deck];
     let newDiscard = [...discardPile];
 
-    if (newDeck.length === 0) {
-      if (newDiscard.length <= 1) return;
-      const top = newDiscard.pop()!;
-      newDeck = shuffle(newDiscard);
-      newDiscard = [top];
-    }
-
     const drawAmount = forcedCount || (stackAccumulation > 0 ? stackAccumulation : 1);
     const drawnCards: ICard[] = [];
     for (let i = 0; i < drawAmount; i++) {
+      // Reshuffle discard pile into deck if deck is empty
+      if (newDeck.length === 0) {
+        if (newDiscard.length <= 1) break;
+        const top = newDiscard.pop()!;
+        newDeck = shuffle(newDiscard);
+        newDiscard = [top];
+      }
       if (newDeck.length === 0) break;
       drawnCards.push(newDeck.shift()!);
     }
