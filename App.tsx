@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import MainMenu from './components/MainMenu';
 import GameBoard from './components/GameBoard';
-import { GameMode } from './types';
+import { GameMode, CardColor } from './types';
 import FriendsLobby from './components/FriendsLobby';
 import { useProfile } from './hooks/useProfile';
 import { getSocket } from './utils/socket';
@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'menu' | 'game' | 'friends'>('menu');
   const [gameMode, setGameMode] = useState<GameMode>('classic');
   const [onlineMode, setOnlineMode] = useState(false);
+  const [pendingOnlineCardId, setPendingOnlineCardId] = useState<string | null>(null);
   const { profile, setName } = useProfile();
   const socket = useMemo(() => getSocket(), []);
 
@@ -32,7 +33,6 @@ const App: React.FC = () => {
         ...prev,
         ...snapshot,
         error: null,
-        isChoosingColor: false,
         isStackingChoice: false,
         pendingCardPlayed: null,
       }));
@@ -50,9 +50,35 @@ const App: React.FC = () => {
     }
   }, [currentView, onlineMode, socket]);
 
+  const handleOnlinePlayCard = useCallback((cardId: string) => {
+    // Check if the card is a black card that needs color selection
+    const state = useGameStore.getState();
+    const userPlayer = state.players.find(p => !p.isBot);
+    const card = userPlayer?.hand?.find(c => c.id === cardId);
+
+    if (card && card.color === 'black' && card.type !== 'x2') {
+      // Show color picker, store the card ID for later
+      setPendingOnlineCardId(cardId);
+      useGameStore.setState({ isChoosingColor: true });
+      return;
+    }
+
+    // Not a wild card — play directly
+    socket.emit('game:play', { cardId });
+  }, [socket]);
+
+  const handleOnlineConfirmColor = useCallback((color: CardColor) => {
+    if (pendingOnlineCardId) {
+      socket.emit('game:play', { cardId: pendingOnlineCardId, chosenColor: color });
+      setPendingOnlineCardId(null);
+      useGameStore.setState({ isChoosingColor: false });
+    }
+  }, [socket, pendingOnlineCardId]);
+
   const returnToMenu = () => {
     socket.emit('room:leave');
     setOnlineMode(false);
+    setPendingOnlineCardId(null);
     setCurrentView('menu');
   };
 
@@ -77,9 +103,9 @@ const App: React.FC = () => {
           mode={gameMode}
           onExit={returnToMenu}
           onlineMode={onlineMode}
-          onOnlinePlayCard={cardId => socket.emit('game:play', { cardId })}
+          onOnlinePlayCard={handleOnlinePlayCard}
           onOnlineDrawCard={() => socket.emit('game:draw')}
-          onOnlineConfirmColor={() => {}}
+          onOnlineConfirmColor={handleOnlineConfirmColor}
         />
       )}
     </div>
@@ -87,3 +113,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+
